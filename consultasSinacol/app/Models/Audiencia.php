@@ -11,6 +11,7 @@ use App\Traits\RequestsAppends;
 use Illuminate\Support\Arr;
 use OwenIt\Auditing\Contracts\Auditable;
 use App\Traits\ValidTypes;
+use Illuminate\Database\Eloquent\Builder;
 
 class Audiencia extends Model implements Auditable
 {
@@ -30,6 +31,28 @@ class Audiencia extends Model implements Auditable
     protected $table = 'audiencias';
     protected $guarded = ['id','created_at','updated_at','deleted_at'];
     protected $loadable = ['conciliador', 'sala','parte','resolucion'];
+
+    // Definimos el scope para las condiciones del query  
+    public function scopeWithDetails(Builder $query, $fechaAudiencia)
+    {
+        return $query
+            ->select('audiencias.*', 'contactos.contacto', 'contactos.tipo_contacto_id', 'expedientes.folio', 
+                     \DB::raw("CONCAT(personas.nombre, ' ', personas.primer_apellido, ' ', personas.segundo_apellido) as nombre_conciliador"))
+            ->join('audiencias_partes', 'audiencias.id', '=', 'audiencias_partes.audiencia_id')
+            ->join('partes', 'partes.id', '=', 'audiencias_partes.parte_id')
+            ->join('contactos', function ($join) {
+                $join->on('contactos.contactable_id', '=', 'partes.id')
+                     ->where('contactos.contactable_type', 'App\\Parte');
+            })
+            ->join('expedientes', 'audiencias.expediente_id', '=', 'expedientes.id')
+            ->join('conciliadores', 'audiencias.conciliador_id', '=', 'conciliadores.id')
+            ->join('personas', 'conciliadores.persona_id', '=', 'personas.id')
+            ->join('solicitudes', function ($join) {
+                $join->on('partes.solicitud_id', '=', 'solicitudes.id')
+                     ->where('solicitudes.inmediata', false);
+            })
+            ->where('audiencias.fecha_audiencia', $fechaAudiencia);
+    }
 
     public function transformAudit($data):array
     {
