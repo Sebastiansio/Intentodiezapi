@@ -20,3 +20,4 @@ Route::get('/', function () {
 
 
 Route::get('/audiencias', [AudienciasController::class, 'getAudiencias']);
+Route::get('/mundo', [AudienciasController::class, 'getHolaMundo']);

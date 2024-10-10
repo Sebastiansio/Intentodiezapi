@@ -12,4 +12,8 @@ class AudienciasController extends Controller
         $audiencias = Audiencia::withDetails($fechaAudiencia)->get();
         return response()->json($audiencias);
     }
+
+    public function getHolaMundo(Request $request){
+        return response()->json(['hola' => 'mundo']);
+    }
 }
