@@ -19,5 +19,5 @@ Route::get('/', function () {
 });
 
 
-Route::get('/audiencias', [AudienciasController::class, 'getAudiencias']);
+Route::post('/audiencias', [AudienciasController::class, 'getAudiencias']);
 Route::get('/mundo', [AudienciasController::class, 'getHolaMundo']);
