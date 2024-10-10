@@ -54,6 +54,8 @@ class Audiencia extends Model implements Auditable
             ->where('audiencias.fecha_audiencia', $fechaAudiencia);
     }
 
+    
+
     public function transformAudit($data):array
     {
         if (Arr::has($data, 'new_values.finalizada')) {

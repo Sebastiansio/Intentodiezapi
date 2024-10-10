@@ -9,7 +9,7 @@ class AudienciasController extends Controller
     public function getAudiencias(Request $request)
     {
         $fechaAudiencia = $request->input('fecha_audiencia');
-        $audiencias = Audiencia::getAudienciasWithDetails($fechaAudiencia);
+        $audiencias = Audiencia::withDetails($fechaAudiencia)->get();
         return response()->json($audiencias);
     }
 }
