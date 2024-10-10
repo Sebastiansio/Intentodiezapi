@@ -8,7 +8,8 @@ class AudienciasController extends Controller
 {
     public function getAudiencias(Request $request)
     {
-        $fechaAudiencia = $request->input('fecha_audiencia');
+        // $fechaAudiencia = $request->input('fecha_audiencia');
+        $fechaAudiencia = "2024-10-09";
         $audiencias = Audiencia::withDetails($fechaAudiencia)->get();
         return response()->json($audiencias);
     }
