@@ -14,6 +14,7 @@ class AudienciasController extends Controller
         $fechaAudiencia = $fechaAudiencia->format('Y-m-d');
 
         $audiencias = Audiencia::withDetails($fechaAudiencia)->get();
+        
         return response()->json($audiencias);
     }
 

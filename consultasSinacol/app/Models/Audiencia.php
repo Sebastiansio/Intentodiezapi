@@ -49,7 +49,8 @@ class Audiencia extends Model implements Auditable
             ->join('personas', 'conciliadores.persona_id', '=', 'personas.id')
             ->join('solicitudes', function ($join) {
                 $join->on('partes.solicitud_id', '=', 'solicitudes.id')
-                     ->where('solicitudes.inmediata', false);
+                     ->where('solicitudes.inmediata', false)
+                     ->where('solicitudes.centro_id', '38');
             })
             ->where('audiencias.fecha_audiencia', $fechaAudiencia);
     }
