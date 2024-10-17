@@ -68,9 +68,13 @@ class Audiencia extends Model implements Auditable
                 DB::raw("STRING_AGG(DISTINCT TRIM(UPPER(CONCAT(p.nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido))), ' | ') AS conciliador"),
                 DB::raw("STRING_AGG(DISTINCT sl.sala, ' | ') AS sala"),
                 DB::raw("CASE WHEN audiencias.finalizada = true THEN 'Finalizada' ELSE 'Por celebrar' END AS estatus"),
-                // Agregamos el paréntesis de cierre faltante en cada función ARRAY_AGG
-                DB::raw("ARRAY_AGG(DISTINCT TRIM(UPPER(CONCAT(ps.nombre, ' ', ps.primer_apellido, ' ', ps.segundo_apellido, ' ', COALESCE(ps.nombre_comercial, ''))))) AS solicitantes"),
-                DB::raw("ARRAY_AGG(DISTINCT TRIM(UPPER(CONCAT(pc.nombre, ' ', pc.primer_apellido, ' ', pc.segundo_apellido, ' ', COALESCE(pc.nombre_comercial, ''))))) AS citados"),
+                // Usamos JSON_AGG en lugar de ARRAY_AGG y aplicamos COALESCE para manejar nulos
+                DB::raw("COALESCE(JSON_AGG(DISTINCT TRIM(UPPER(CONCAT(
+                    ps.nombre, ' ', ps.primer_apellido, ' ', ps.segundo_apellido, ' ', COALESCE(ps.nombre_comercial, '')
+                )))), '[]') AS solicitantes"),
+                DB::raw("COALESCE(JSON_AGG(DISTINCT TRIM(UPPER(CONCAT(
+                    pc.nombre, ' ', pc.primer_apellido, ' ', pc.segundo_apellido, ' ', COALESCE(pc.nombre_comercial, '')
+                )))), '[]') AS citados"),
                 DB::raw("'Audiencia' AS tipo_evento"),
             ])
             ->leftJoin('conciliadores_audiencias AS ca', 'ca.audiencia_id', '=', 'audiencias.id')

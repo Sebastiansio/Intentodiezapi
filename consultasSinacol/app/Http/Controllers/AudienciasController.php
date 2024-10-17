@@ -25,15 +25,16 @@ class AudienciasController extends Controller
         return response()->json(['hola' => 'mundo']);
     }
 
+
     public function getAudienciasPorDia(Request $request)
     {
-         // Obtener la fecha del request o usar la fecha actual
+        // Obtener la fecha del request o usar la fecha actual
         $fecha = Carbon::now();
         $fecha = $fecha->format('Y-m-d');
 
         $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
 
-        // Formatear los resultados para incluir los campos requeridos
+        // Los campos 'solicitantes' y 'citados' ya serán arrays gracias a los casts
         $result = $audiencias->map(function ($item) {
             return [
                 'Expediente' => $item->expediente,
@@ -44,13 +45,11 @@ class AudienciasController extends Controller
                 'Conciliador' => $item->conciliador,
                 'Estatus' => $item->estatus,
                 'Solicitante' => $item->solicitantes,
-                'Citado' => $item->citados,           
+                'Citado' => $item->citados,
             ];
         });
 
         return response()->json($result);
     }
-
-
 
 }
