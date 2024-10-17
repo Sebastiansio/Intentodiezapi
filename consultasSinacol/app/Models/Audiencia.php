@@ -11,6 +11,7 @@ use App\Traits\RequestsAppends;
 use Illuminate\Support\Arr;
 use OwenIt\Auditing\Contracts\Auditable;
 use App\Traits\ValidTypes;
+use App\Models\DB;
 use Illuminate\Database\Eloquent\Builder;
 
 class Audiencia extends Model implements Auditable
@@ -55,9 +56,56 @@ class Audiencia extends Model implements Auditable
             ->where('audiencias.fecha_audiencia', $fechaAudiencia);
     }
 
-    
-
-
+    public function scopeConciliacionAudiencias($query, $fechaInicio, $fechaFin, $centroId = 38)
+    {
+        return $query
+            ->from('audiencias')
+            ->select([
+                DB::raw("CONCAT(s.folio, '/', TO_CHAR(s.created_at, 'YYYY')) AS folio_solicitud"),
+                'e.folio AS expediente',
+                DB::raw("CONCAT(audiencias.folio, '/', TO_CHAR(audiencias.created_at, 'YYYY')) AS audiencia"),
+                'audiencias.fecha_audiencia AS fecha_evento',
+                DB::raw("audiencias.hora_inicio::text AS hora_inicio"),
+                DB::raw("audiencias.hora_fin::text AS hora_termino"),
+                DB::raw("STRING_AGG(DISTINCT TRIM(UPPER(CONCAT(p.nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido))), ' | ') AS conciliador"),
+                DB::raw("STRING_AGG(DISTINCT sl.sala, ' | ') AS sala"),
+                DB::raw("CASE WHEN audiencias.finalizada = true THEN 'Finalizada' ELSE 'Por celebrar' END AS estatus"),
+                DB::raw("COALESCE(STRING_AGG(DISTINCT TRIM(UPPER(CONCAT(ps.nombre, ' ', ps.primer_apellido, ' ', ps.segundo_apellido, ' ', ps.nombre_comercial))), ' | '), '') AS solicitantes"),
+                DB::raw("COALESCE(STRING_AGG(DISTINCT TRIM(UPPER(CONCAT(pc.nombre, ' ', pc.primer_apellido, ' ', pc.segundo_apellido, ' ', pc.nombre_comercial))), ' | '), '') AS citados"),
+                DB::raw("'Audiencia' AS tipo_evento"),
+            ])
+            ->leftJoin('conciliadores_audiencias AS ca', 'ca.audiencia_id', '=', 'audiencias.id')
+            ->leftJoin('conciliadores AS c', 'c.id', '=', 'ca.conciliador_id')
+            ->leftJoin('personas AS p', 'p.id', '=', 'c.persona_id')
+            ->leftJoin('salas_audiencias AS sa', 'sa.audiencia_id', '=', 'audiencias.id')
+            ->leftJoin('salas AS sl', 'sl.id', '=', 'sa.sala_id')
+            ->leftJoin('expedientes AS e', 'e.id', '=', 'audiencias.expediente_id')
+            ->leftJoin('solicitudes AS s', 's.id', '=', 'e.solicitud_id')
+            ->leftJoin('partes AS ps', function ($join) {
+                $join->on('ps.solicitud_id', '=', 's.id')
+                     ->where('ps.tipo_parte_id', '=', 1);
+            })
+            ->leftJoin('partes AS pc', function ($join) {
+                $join->on('pc.solicitud_id', '=', 's.id')
+                     ->where('pc.tipo_parte_id', '=', 2);
+            })
+            ->whereBetween('audiencias.fecha_audiencia', [$fechaInicio, $fechaFin])
+            ->where('s.centro_id', $centroId)
+            ->where('s.inmediata', false)
+            ->groupBy([
+                's.folio',
+                's.created_at',
+                'e.folio',
+                'audiencias.folio',
+                'audiencias.created_at',
+                'audiencias.fecha_audiencia',
+                'audiencias.hora_inicio',
+                'audiencias.hora_fin',
+                'audiencias.finalizada',
+            ])
+            ->orderBy('fecha_evento')
+            ->orderBy('hora_inicio');
+    }
 
     public function transformAudit($data):array
     {
