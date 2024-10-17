@@ -11,7 +11,6 @@ use App\Traits\RequestsAppends;
 use Illuminate\Support\Arr;
 use OwenIt\Auditing\Contracts\Auditable;
 use App\Traits\ValidTypes;
-use App\Models\DB;
 use Illuminate\Database\Eloquent\Builder;
 
 class Audiencia extends Model implements Auditable
