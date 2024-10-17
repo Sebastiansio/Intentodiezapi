@@ -27,13 +27,13 @@ class AudienciasController extends Controller
 
     public function getAudienciasPorDia(Request $request)
     {
-        // Obtener la fecha del request o usar la fecha actual
+         // Obtener la fecha del request o usar la fecha actual
         $fecha = Carbon::now();
         $fecha = $fecha->format('Y-m-d');
 
         $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
 
-        // Formatear los resultados para incluir solo los campos requeridos
+        // Formatear los resultados para incluir los campos requeridos
         $result = $audiencias->map(function ($item) {
             return [
                 'Expediente' => $item->expediente,
@@ -44,7 +44,7 @@ class AudienciasController extends Controller
                 'Conciliador' => $item->conciliador,
                 'Estatus' => $item->estatus,
                 'Solicitante' => $item->solicitantes,
-                'Citado' => $item->citados,
+                'Citado' => $item->citados,           
             ];
         });
 

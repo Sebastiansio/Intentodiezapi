@@ -58,7 +58,6 @@ class Audiencia extends Model implements Auditable
     public function scopeConciliacionAudiencias($query, $fechaInicio, $fechaFin, $centroId = 38)
     {
         return $query
-            ->from('audiencias')
             ->select([
                 DB::raw("CONCAT(s.folio, '/', TO_CHAR(s.created_at, 'YYYY')) AS folio_solicitud"),
                 'e.folio AS expediente',
@@ -69,8 +68,9 @@ class Audiencia extends Model implements Auditable
                 DB::raw("STRING_AGG(DISTINCT TRIM(UPPER(CONCAT(p.nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido))), ' | ') AS conciliador"),
                 DB::raw("STRING_AGG(DISTINCT sl.sala, ' | ') AS sala"),
                 DB::raw("CASE WHEN audiencias.finalizada = true THEN 'Finalizada' ELSE 'Por celebrar' END AS estatus"),
-                DB::raw("COALESCE(STRING_AGG(DISTINCT TRIM(UPPER(CONCAT(ps.nombre, ' ', ps.primer_apellido, ' ', ps.segundo_apellido, ' ', ps.nombre_comercial))), ' | '), '') AS solicitantes"),
-                DB::raw("COALESCE(STRING_AGG(DISTINCT TRIM(UPPER(CONCAT(pc.nombre, ' ', pc.primer_apellido, ' ', pc.segundo_apellido, ' ', pc.nombre_comercial))), ' | '), '') AS citados"),
+                // Cambiamos a ARRAY_AGG para obtener arrays en lugar de strings concatenados
+                DB::raw("ARRAY_AGG(DISTINCT TRIM(UPPER(CONCAT(ps.nombre, ' ', ps.primer_apellido, ' ', ps.segundo_apellido, ' ', COALESCE(ps.nombre_comercial, '')))) AS solicitantes"),
+                DB::raw("ARRAY_AGG(DISTINCT TRIM(UPPER(CONCAT(pc.nombre, ' ', pc.primer_apellido, ' ', pc.segundo_apellido, ' ', COALESCE(pc.nombre_comercial, '')))) AS citados"),
                 DB::raw("'Audiencia' AS tipo_evento"),
             ])
             ->leftJoin('conciliadores_audiencias AS ca', 'ca.audiencia_id', '=', 'audiencias.id')
