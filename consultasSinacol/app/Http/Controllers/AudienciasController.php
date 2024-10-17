@@ -25,41 +25,52 @@ class AudienciasController extends Controller
         return response()->json(['hola' => 'mundo']);
     }
 
-
-    public function getAudienciasPorDia(Request $request)
+    class AudienciaController extends Controller
     {
-        // Obtener la fecha del request o usar la fecha actual
-        $fecha = Carbon::now();
-        $fecha = $fecha->format('Y-m-d');
-
-        $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
-
-                // Formatear los resultados para incluir los campos requeridos
-                $result = $audiencias->map(function ($item) {
-                    // Transformar 'solicitantes' en un array de objetos con clave 'Solicitante'
-                    $solicitantes = array_map(function ($solicitante) {
-                        return ['Solicitante' => $solicitante];
-                    }, $item->solicitantes ?? []);
-        
-                    // Transformar 'citados' en un array de objetos con clave 'Citado'
-                    $citados = array_map(function ($citado) {
-                        return ['Citado' => $citado];
-                    }, $item->citados ?? []);
-
-                    return [
-                        'Expediente' => $item->expediente,
-                        'Folio_soli' => $item->folio_solicitud,
-                        'Fecha audiencia' => $item->fecha_evento,
-                        'Hora de inicio' => $item->hora_inicio,
-                        'Hora Fin' => $item->hora_termino,
-                        'Conciliador' => $item->conciliador,
-                        'Estatus' => $item->estatus,
-                        'Solicitantes' => $solicitantes,
-                        'Citados' => $citados,
-                    ];
-                });
-        
-                return response()->json($result);
-    }
+        public function getAudienciasPorDia(Request $request)
+        {
+            // Obtener la fecha del request o usar la fecha actual
+            $fecha = $request->input('fecha', date('Y-m-d'));
+    
+            $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
+    
+            // Formatear los resultados para incluir los campos requeridos
+            $result = $audiencias->map(function ($item) {
+                // Decodificar 'solicitantes' y 'citados' si son cadenas JSON
+                $solicitantes = $item->solicitantes;
+                if (is_string($solicitantes)) {
+                    $solicitantes = json_decode($solicitantes, true) ?? [];
+                }
+    
+                $citados = $item->citados;
+                if (is_string($citados)) {
+                    $citados = json_decode($citados, true) ?? [];
+                }
+    
+                // Transformar 'solicitantes' en un array de objetos con clave 'Solicitante'
+                $solicitantesArray = array_map(function ($solicitante) {
+                    return ['Solicitante' => $solicitante];
+                }, $solicitantes);
+    
+                // Transformar 'citados' en un array de objetos con clave 'Citado'
+                $citadosArray = array_map(function ($citado) {
+                    return ['Citado' => $citado];
+                }, $citados);
+    
+                return [
+                    'Expediente' => $item->expediente,
+                    'Folio_soli' => $item->folio_solicitud,
+                    'Fecha audiencia' => $item->fecha_evento,
+                    'Hora de inicio' => $item->hora_inicio,
+                    'Hora Fin' => $item->hora_termino,
+                    'Conciliador' => $item->conciliador,
+                    'Estatus' => $item->estatus,
+                    'Solicitantes' => $solicitantesArray,
+                    'Citados' => $citadosArray,
+                ];
+            });
+    
+            return response()->json($result);
+        }
 
 }
