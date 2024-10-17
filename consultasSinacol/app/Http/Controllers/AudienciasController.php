@@ -28,7 +28,8 @@ class AudienciasController extends Controller
     public function getAudienciasPorDia(Request $request)
     {
         // Obtener la fecha del request o usar la fecha actual
-        $fecha = $request->input('fecha', date('Y-m-d'));
+        $fecha = Carbon::now();
+        $fecha = $fecha->format('Y-m-d');
 
         $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
 
