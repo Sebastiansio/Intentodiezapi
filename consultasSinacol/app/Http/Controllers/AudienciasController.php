@@ -34,22 +34,32 @@ class AudienciasController extends Controller
 
         $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
 
-        // Los campos 'solicitantes' y 'citados' ya serán arrays gracias a los casts
-        $result = $audiencias->map(function ($item) {
-            return [
-                'Expediente' => $item->expediente,
-                'Folio_soli' => $item->folio_solicitud,
-                'Fecha audiencia' => $item->fecha_evento,
-                'Hora de inicio' => $item->hora_inicio,
-                'Hora Fin' => $item->hora_termino,
-                'Conciliador' => $item->conciliador,
-                'Estatus' => $item->estatus,
-                'Solicitante' => $item->solicitantes,
-                'Citado' => $item->citados,
-            ];
-        });
+                // Formatear los resultados para incluir los campos requeridos
+                $result = $audiencias->map(function ($item) {
+                    // Transformar 'solicitantes' en un array de objetos con clave 'Solicitante'
+                    $solicitantes = array_map(function ($solicitante) {
+                        return ['Solicitante' => $solicitante];
+                    }, $item->solicitantes ?? []);
+        
+                    // Transformar 'citados' en un array de objetos con clave 'Citado'
+                    $citados = array_map(function ($citado) {
+                        return ['Citado' => $citado];
+                    }, $item->citados ?? []);
 
-        return response()->json($result);
+                    return [
+                        'Expediente' => $item->expediente,
+                        'Folio_soli' => $item->folio_solicitud,
+                        'Fecha audiencia' => $item->fecha_evento,
+                        'Hora de inicio' => $item->hora_inicio,
+                        'Hora Fin' => $item->hora_termino,
+                        'Conciliador' => $item->conciliador,
+                        'Estatus' => $item->estatus,
+                        'Solicitantes' => $solicitantes,
+                        'Citados' => $citados,
+                    ];
+                });
+        
+                return response()->json($result);
     }
 
 }
