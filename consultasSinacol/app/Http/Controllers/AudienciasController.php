@@ -25,9 +25,7 @@ class AudienciasController extends Controller
         return response()->json(['hola' => 'mundo']);
     }
 
-    class AudienciaController extends Controller
-    {
-        public function getAudienciasPorDia(Request $request)
+    public function getAudienciasPorDia(Request $request)
         {
             // Obtener la fecha del request o usar la fecha actual
             $fecha = $request->input('fecha', date('Y-m-d'));
