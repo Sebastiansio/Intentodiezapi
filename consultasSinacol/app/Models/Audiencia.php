@@ -68,13 +68,14 @@ class Audiencia extends Model implements Auditable
                 DB::raw("STRING_AGG(DISTINCT TRIM(UPPER(CONCAT(p.nombre, ' ', p.primer_apellido, ' ', p.segundo_apellido))), ' | ') AS conciliador"),
                 DB::raw("STRING_AGG(DISTINCT sl.sala, ' | ') AS sala"),
                 DB::raw("CASE WHEN audiencias.finalizada = true THEN 'Finalizada' ELSE 'Por celebrar' END AS estatus"),
-                // Usamos JSON_AGG para obtener los datos en formato JSON
+                // Corrected parentheses for 'solicitantes'
                 DB::raw("COALESCE(JSON_AGG(DISTINCT TRIM(UPPER(CONCAT(
                     ps.nombre, ' ', ps.primer_apellido, ' ', ps.segundo_apellido, ' ', COALESCE(ps.nombre_comercial, '')
-                ))), '[]') AS solicitantes"),
+                )))), '[]') AS solicitantes"),
+                // Corrected parentheses for 'citados'
                 DB::raw("COALESCE(JSON_AGG(DISTINCT TRIM(UPPER(CONCAT(
                     pc.nombre, ' ', pc.primer_apellido, ' ', pc.segundo_apellido, ' ', COALESCE(pc.nombre_comercial, '')
-                ))), '[]') AS citados"),
+                )))), '[]') AS citados"),
                 DB::raw("'Audiencia' AS tipo_evento"),
             ])
             ->leftJoin('conciliadores_audiencias AS ca', 'ca.audiencia_id', '=', 'audiencias.id')
@@ -109,7 +110,6 @@ class Audiencia extends Model implements Auditable
             ->orderBy('fecha_evento')
             ->orderBy('hora_inicio');
     }
-
     public function transformAudit($data):array
     {
         if (Arr::has($data, 'new_values.finalizada')) {
