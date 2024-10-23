@@ -22,7 +22,16 @@ class AudienciasController extends Controller
     }
 
     public function getHolaMundo(Request $request){
-        return response()->json(['hola' => 'mundo']);
+
+         // Obtener la fecha del request o usar la fecha actual
+         $fecha = $request->input('fecha', date('Y-m-d'));
+    
+         $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
+ 
+         // Formatear los resultados para incluir los campos requeridos
+         $result = $audiencias;
+
+        return response()->json($result);
     }
 
     public function getAudienciasPorDia(Request $request)
@@ -55,20 +64,19 @@ class AudienciasController extends Controller
                     return ['Citado' => $citado];
                 }, $citados);
     
-                // return [
-                //     'Expediente' => $item->expediente,
-                //     'Fecha' => $item->fecha,
-                //     'Folio audiencia' => $item->folio_audiencia,
-                //     'Folio solicitud' => $item->folio_solicitud,
-                //     'Fecha audiencia' => $item->fecha_evento,
-                //     'Hora de inicio' => $item->hora_inicio,
-                //     'Hora Fin' => $item->hora_termino,
-                //     'Conciliador' => $item->conciliador,
-                //     'Estatus' => $item->estatus,
-                //     'Solicitantes' => $solicitantesArray,
-                //     'Citados' => $citadosArray,
-                // ];
-                
+                return [
+                    'Expediente' => $item->expediente,
+                    'Fecha' => $item->fecha,
+                    'Folio audiencia' => $item->folio_audiencia,
+                    'Folio solicitud' => $item->folio_solicitud,
+                    'Fecha audiencia' => $item->fecha_evento,
+                    'Hora de inicio' => $item->hora_inicio,
+                    'Hora Fin' => $item->hora_termino,
+                    'Conciliador' => $item->conciliador,
+                    'Estatus' => $item->estatus,
+                    'Solicitantes' => $solicitantesArray,
+                    'Citados' => $citadosArray,
+                ];
             });
     
             return response()->json($result);
