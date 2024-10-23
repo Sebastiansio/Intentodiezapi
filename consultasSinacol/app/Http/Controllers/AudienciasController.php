@@ -57,7 +57,9 @@ class AudienciasController extends Controller
     
                 return [
                     'Expediente' => $item->expediente,
-                    'Folio_soli' => $item->folio_solicitud,
+                    'Fecha' => $item->fecha,
+                    'Folio aucdiencia' => $item->folio_audiencia,
+                    'Folio solicitud' => $item->folio_solicitud,
                     'Fecha audiencia' => $item->fecha_evento,
                     'Hora de inicio' => $item->hora_inicio,
                     'Hora Fin' => $item->hora_termino,
