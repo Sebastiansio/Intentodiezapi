@@ -55,19 +55,20 @@ class AudienciasController extends Controller
                     return ['Citado' => $citado];
                 }, $citados);
     
-                return [
-                    'Expediente' => $item->expediente,
-                    'Fecha' => $item->fecha,
-                    'Folio aucdiencia' => $item->folio_audiencia,
-                    'Folio solicitud' => $item->folio_solicitud,
-                    'Fecha audiencia' => $item->fecha_evento,
-                    'Hora de inicio' => $item->hora_inicio,
-                    'Hora Fin' => $item->hora_termino,
-                    'Conciliador' => $item->conciliador,
-                    'Estatus' => $item->estatus,
-                    'Solicitantes' => $solicitantesArray,
-                    'Citados' => $citadosArray,
-                ];
+                // return [
+                //     'Expediente' => $item->expediente,
+                //     'Fecha' => $item->fecha,
+                //     'Folio audiencia' => $item->folio_audiencia,
+                //     'Folio solicitud' => $item->folio_solicitud,
+                //     'Fecha audiencia' => $item->fecha_evento,
+                //     'Hora de inicio' => $item->hora_inicio,
+                //     'Hora Fin' => $item->hora_termino,
+                //     'Conciliador' => $item->conciliador,
+                //     'Estatus' => $item->estatus,
+                //     'Solicitantes' => $solicitantesArray,
+                //     'Citados' => $citadosArray,
+                // ];
+                
             });
     
             return response()->json($result);
