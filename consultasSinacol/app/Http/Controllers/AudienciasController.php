@@ -64,7 +64,7 @@ class AudienciasController extends Controller
             // Obtener la fecha del request o usar la fecha actual
             $fecha = $request->input('fecha', date('Y-m-d'));
     
-            $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
+            $audiencias = Audiencia::whereDate('fecha_audiencia', $fecha)->get();
     
             // Formatear los resultados para incluir los campos requeridos
             $result = $audiencias->map(function ($item) {
