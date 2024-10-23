@@ -60,9 +60,9 @@ class AudienciasController extends Controller
         {
             // Obtener la fecha del request o usar la fecha actual
             $fecha = $request->input('fecha', date('Y-m-d'));
-    
+        
             $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
-    
+        
             // Formatear los resultados para incluir los campos requeridos
             $result = $audiencias->map(function ($item) {
                 // Decodificar 'solicitantes' y 'citados' si son cadenas JSON
@@ -70,22 +70,22 @@ class AudienciasController extends Controller
                 if (is_string($solicitantes)) {
                     $solicitantes = json_decode($solicitantes, true) ?? [];
                 }
-    
+        
                 $citados = $item->citados;
                 if (is_string($citados)) {
                     $citados = json_decode($citados, true) ?? [];
                 }
-    
+        
                 // Transformar 'solicitantes' en un array de objetos con clave 'Solicitante'
                 $solicitantesArray = array_map(function ($solicitante) {
                     return ['Solicitante' => $solicitante];
                 }, $solicitantes);
-    
+        
                 // Transformar 'citados' en un array de objetos con clave 'Citado'
                 $citadosArray = array_map(function ($citado) {
                     return ['Citado' => $citado];
                 }, $citados);
-    
+        
                 return [
                     'Expediente' => $item->expediente,
                     'Folio audiencia' => $item->audiencia,
@@ -99,9 +99,9 @@ class AudienciasController extends Controller
                     'Citados' => $citadosArray,
                 ];
             });
-    
+        
             return response()->json($result);
         }
-
+        
 
 }
