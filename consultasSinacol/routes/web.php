@@ -19,6 +19,6 @@ Route::get('/', function () {
 });
 
 
-Route::get('/audiencias', [AudienciasController::class, 'getAudiencias']);
+Route::get('/audiencias/dia-siguiente', [AudienciasController::class, 'getAudienciasDiaSiguiente']);
 Route::get('/mundo', [AudienciasController::class, 'getHolaMundo']);
 Route::get('/audiencias/por-dia', [AudienciasController::class, 'getAudienciasPorDia']);
