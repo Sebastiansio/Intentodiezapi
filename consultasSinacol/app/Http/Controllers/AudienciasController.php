@@ -63,7 +63,7 @@ class AudienciasController extends Controller
     $fechaSiguiente = Carbon::parse($fecha)->addDay()->format('Y-m-d');
 
     // Obtener las audiencias para el día siguiente
-    $audiencias = Audiencia::whereDate('fecha_evento', $fechaSiguiente)->get();
+    $audiencias = Audiencia::whereDate($fechaSiguiente, $fechaSiguiente)->get();
 
     // Formatear los resultados para incluir los campos requeridos
     $result = $audiencias->map(function ($item) {
