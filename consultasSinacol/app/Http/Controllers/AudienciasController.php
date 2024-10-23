@@ -60,6 +60,7 @@ class AudienciasController extends Controller
         {
             // Obtener la fecha del request o usar la fecha actual
             $fecha = $request->input('fecha', date('Y-m-d'));
+            $fechaSiguiente = Carbon::parse($fecha)->addDay()->format('Y-m-d');
         
             $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
         
