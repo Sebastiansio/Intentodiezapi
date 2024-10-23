@@ -59,7 +59,7 @@ class AudienciasController extends Controller
         public function getAudienciasDiaSiguiente(Request $request)
         {
             // Obtener la fecha del request o usar la fecha actual
-            $fecha = "2024-10-24";
+            $fecha = "2024-10-25";
     
             $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
     
