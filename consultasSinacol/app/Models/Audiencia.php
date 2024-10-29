@@ -227,10 +227,8 @@ class Audiencia extends Model implements Auditable
         return $this->belongsTo(TipoTerminacionAudiencia::class, 'tipo_terminacion_audiencia_id');
     }
 
-    public function tipoTerminacion(){
-        return $this->belongsTo(TipoTerminacionAudiencia::class, 'tipo_terminacion_audiencia_id');
-    }
-    
+
+
     public function scopeAudienciaEncuesta(Builder $query, string $fechaAudiencia)
 {
     return $query->select(
