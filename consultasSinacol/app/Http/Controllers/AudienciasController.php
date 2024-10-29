@@ -103,5 +103,11 @@ class AudienciasController extends Controller
             return response()->json($result);
         }
         
+        public function getMundo(){
+
+            $mundo = "Hola mundo";
+
+            return response()->json($mundo);
+        }
 
 }

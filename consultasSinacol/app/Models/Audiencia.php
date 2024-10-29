@@ -226,4 +226,151 @@ class Audiencia extends Model implements Auditable
     public function tipoTerminacion(){
         return $this->belongsTo(TipoTerminacionAudiencia::class, 'tipo_terminacion_audiencia_id');
     }
+
+    public function tipoTerminacion(){
+        return $this->belongsTo(TipoTerminacionAudiencia::class, 'tipo_terminacion_audiencia_id');
+    }
+    
+    public function scopeAudienciaEncuesta(Builder $query, string $fechaAudiencia)
+{
+    return $query->select(
+            'a.fecha_audiencia',
+            'c.contacto',
+            'c.tipo_contacto_id',
+            'e.folio',
+            DB::raw("CONCAT(per.nombre, ' ', per.primer_apellido, ' ', per.segundo_apellido) AS nombre_conciliador"),
+            DB::raw("
+                CASE
+                    WHEN a.tipo_terminacion_audiencia_id = 1 
+                         AND a.resolucion_id = 1 
+                         AND sol.inmediata = FALSE 
+                         AND c.tipo_contacto_id = 1 THEN 1
+                    WHEN a.resolucion_id = 4 
+                         AND sol.inmediata = FALSE 
+                         AND (
+                             (p.tipo_parte_id = 1 AND p.tipo_persona_id = 1 AND sol.tipo_solicitud_id = 1) 
+                             OR 
+                             (p.tipo_parte_id = 2 AND p.tipo_persona_id = 1 AND sol.tipo_solicitud_id = 1)
+                         ) THEN 2
+                    WHEN a.tipo_terminacion_audiencia_id = 3 
+                         AND a.resolucion_id = 3 
+                         AND sol.inmediata = FALSE 
+                         AND (
+                             (p.tipo_parte_id = 1 AND p.tipo_persona_id = 1 AND sol.tipo_solicitud_id = 1) 
+                             OR 
+                             (p.tipo_parte_id = 2 AND p.tipo_persona_id = 1 AND sol.tipo_solicitud_id = 1)
+                         ) THEN 3
+                    WHEN a.tipo_terminacion_audiencia_id = 1 
+                         AND a.resolucion_id = 3 
+                         AND sol.inmediata = FALSE THEN 4
+                    WHEN a.tipo_terminacion_audiencia_id = 1 
+                         AND a.resolucion_id = 1 
+                         AND sol.inmediata = TRUE THEN 5
+                    ELSE NULL
+                END AS encuesta,
+                ROW_NUMBER() OVER (PARTITION BY 
+                    CASE
+                        WHEN a.tipo_terminacion_audiencia_id = 1 
+                             AND a.resolucion_id = 1 
+                             AND sol.inmediata = FALSE 
+                             AND c.tipo_contacto_id = 1 THEN 1
+                        WHEN a.resolucion_id = 4 
+                             AND sol.inmediata = FALSE 
+                             AND (
+                                 (p.tipo_parte_id = 1 AND p.tipo_persona_id = 1 AND sol.tipo_solicitud_id = 1) 
+                                 OR 
+                                 (p.tipo_parte_id = 2 AND p.tipo_persona_id = 1 AND sol.tipo_solicitud_id = 1)
+                             ) THEN 2
+                        WHEN a.tipo_terminacion_audiencia_id = 3 
+                             AND a.resolucion_id = 3 
+                             AND sol.inmediata = FALSE 
+                             AND (
+                                 (p.tipo_parte_id = 1 AND p.tipo_persona_id = 1 AND sol.tipo_solicitud_id = 1) 
+                                 OR 
+                                 (p.tipo_parte_id = 2 AND p.tipo_persona_id = 1 AND sol.tipo_solicitud_id = 1)
+                             ) THEN 3
+                        WHEN a.tipo_terminacion_audiencia_id = 1 
+                             AND a.resolucion_id = 3 
+                             AND sol.inmediata = FALSE THEN 4
+                        WHEN a.tipo_terminacion_audiencia_id = 1 
+                             AND a.resolucion_id = 1 
+                             AND sol.inmediata = TRUE THEN 5
+                        ELSE NULL
+                    END 
+                    ORDER BY a.fecha_audiencia) AS rn"
+            )
+        )
+        ->join('audiencias_partes as ap', 'audiencias.id', '=', 'ap.audiencia_id')
+        ->join('partes as p', 'p.id', '=', 'ap.parte_id')
+        ->join('contactos as c', function ($join) {
+            $join->on('c.contactable_id', '=', 'p.id')
+                 ->where('c.contactable_type', '=', 'App\\Parte');
+        })
+        ->join('expedientes as e', 'audiencias.expediente_id', '=', 'e.id')
+        ->join('conciliadores as con', 'audiencias.conciliador_id', '=', 'con.id')
+        ->join('personas as per', 'con.persona_id', '=', 'per.id')
+        ->join('solicitudes as sol', 'p.solicitud_id', '=', 'sol.id')
+        ->whereDate('audiencias.fecha_audiencia', $fechaAudiencia)
+        ->where(function ($query) {
+            // Condiciones similares a las de la subconsulta anterior
+            $query->where(function ($q) {
+                    $q->where('audiencias.tipo_terminacion_audiencia_id', 1)
+                      ->where('audiencias.resolucion_id', 1)
+                      ->where('sol.inmediata', false)
+                      ->where('c.tipo_contacto_id', 1);
+                })
+                ->orWhere(function ($q) {
+                    $q->where('audiencias.resolucion_id', 4)
+                      ->where('sol.inmediata', false)
+                      ->where('c.tipo_contacto_id', 1)
+                      ->where(function ($subQuery) {
+                          $subQuery->where(function ($sq) {
+                              $sq->where('p.tipo_parte_id', 1)
+                                 ->where('p.tipo_persona_id', 1)
+                                 ->where('sol.tipo_solicitud_id', 1);
+                          })
+                          ->orWhere(function ($sq) {
+                              $sq->where('p.tipo_parte_id', 2)
+                                 ->where('p.tipo_persona_id', 1)
+                                 ->where('sol.tipo_solicitud_id', 1);
+                          });
+                      });
+                })
+                ->orWhere(function ($q) {
+                    $q->where('audiencias.tipo_terminacion_audiencia_id', 3)
+                      ->where('audiencias.resolucion_id', 3)
+                      ->where('sol.inmediata', false)
+                      ->where('c.tipo_contacto_id', 1)
+                      ->where(function ($subQuery) {
+                          $subQuery->where(function ($sq) {
+                              $sq->where('p.tipo_parte_id', 1)
+                                 ->where('p.tipo_persona_id', 1)
+                                 ->where('sol.tipo_solicitud_id', 1);
+                          })
+                          ->orWhere(function ($sq) {
+                              $sq->where('p.tipo_parte_id', 2)
+                                 ->where('p.tipo_persona_id', 1)
+                                 ->where('sol.tipo_solicitud_id', 1);
+                          });
+                      });
+                })
+                ->orWhere(function ($q) {
+                    $q->where('audiencias.tipo_terminacion_audiencia_id', 1)
+                      ->where('audiencias.resolucion_id', 3)
+                      ->where('sol.inmediata', false)
+                      ->where('c.tipo_contacto_id', 1);
+                })
+                ->orWhere(function ($q) {
+                    $q->where('audiencias.tipo_terminacion_audiencia_id', 1)
+                      ->where('audiencias.resolucion_id', 1)
+                      ->where('sol.inmediata', true)
+                      ->where('c.tipo_contacto_id', 1);
+                });
+        })
+        ->havingRaw('rn <= 20')
+        ->orderBy('encuesta')
+        ->orderBy('fecha_audiencia');
+}
+
+    
 }
