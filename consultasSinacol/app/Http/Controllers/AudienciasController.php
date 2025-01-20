@@ -112,14 +112,20 @@ class AudienciasController extends Controller
 
         public function checkFolioExists(Request $request)
         {
+            // Validar el parámetro 'folio' desde los parámetros de consulta
             $request->validate([
                 'folio' => 'required|string',
             ]);
-
-            $folio = $request->input('folio');
+        
+            // Obtener el parámetro 'folio' desde la URL
+            $folio = $request->query('folio', null);
+        
+            // Verificar si el folio existe en la base de datos
             $exists = Expediente::where('folio', $folio)->exists();
-
+        
+            // Retornar respuesta JSON
             return response()->json(['exists' => $exists]);
         }
+        
 
 }
