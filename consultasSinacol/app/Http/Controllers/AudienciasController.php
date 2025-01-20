@@ -7,6 +7,8 @@ use App\Models\Audiencia;
 use App\Http\Controllers\DB;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
+use App\Models\Expediente;
+
 class AudienciasController extends Controller
 {
     public function getAudienciasPorDia(Request $request)
