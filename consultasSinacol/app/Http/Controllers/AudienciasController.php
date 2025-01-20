@@ -110,4 +110,16 @@ class AudienciasController extends Controller
             return response()->json($mundo);
         }
 
+        public function checkFolioExists(Request $request)
+        {
+            $request->validate([
+                'folio' => 'required|string',
+            ]);
+
+            $folio = $request->input('folio');
+            $exists = Expediente::where('folio', $folio)->exists();
+
+            return response()->json(['exists' => $exists]);
+        }
+
 }
