@@ -184,7 +184,7 @@ class AudienciasController extends Controller
     
             // Filtrar audiencias con estatus 'Concluida'
             $audienciasCount = Audiencia::conciliacionAudiencias($fechaInicio, $fechaFin)
-                ->where('estatus', 'Concluida') // Agregar filtro por estatus
+                #->where('estatus', 'Concluida') // Agregar filtro por estatus
                 ->count();
             return response()->json(['total_audiencias' => $audienciasCount]);
         }
