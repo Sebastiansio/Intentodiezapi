@@ -182,9 +182,8 @@ class AudienciasController extends Controller
             $fechaInicio = "2024-02-01"; // Primer día de febrero
             $fechaFin = "2024-02-28"; // Último día de febrero
     
-            // Filtrar audiencias con estatus 'Concluida'
             $audienciasCount = Audiencia::conciliacionAudiencias($fechaInicio, $fechaFin)->get();
-            $audienciasCount->count();
+
             return response()->json(['total_audiencias' => $audienciasCount]);
         }
 
