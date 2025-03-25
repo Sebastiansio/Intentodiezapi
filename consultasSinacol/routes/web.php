@@ -23,3 +23,4 @@ Route::get('/audiencias/dia-siguiente', [AudienciasController::class, 'getAudien
 Route::get('/mundo', [AudienciasController::class, 'getMundo']);
 Route::get('/audiencias/por-dia', [AudienciasController::class, 'getAudienciasPorDia']);
 Route::get('/expedientes/check-folio', [AudienciasController::class, 'checkFolioExists']);
+Route::get('/audiencias/coutconcluidas', [AudienciasController::class, 'getTotalAudienciasCount']);
