@@ -181,11 +181,12 @@ class AudienciasController extends Controller
 
         public function getTotalAudienciasCount(Request $request)
         {
+            $centroId = 38;
             // Obtener la fecha del mes de febrero
             $fechaInicio = "2025-02-01"; // Primer día de febrero
             $fechaFin = "2025-02-28"; // Último día de febrero
     
-            $audienciasCount = Audiencia::conciliacionAudiencias($fechaInicio, $fechaFin)->get();
+            $audienciasCount = Audiencia::conciliacionAudiencias($fechaInicio, $fechaFin, $centroId)->get();
 
             $result = $audienciasCount->map(function ($item) {
             });
