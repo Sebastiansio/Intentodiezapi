@@ -178,13 +178,13 @@ class AudienciasController extends Controller
 
         public function getTotalAudienciasCount(Request $request)
         {
-            // Obtener la fecha del mes actual
-            $fechaInicio = date('Y-m-01'); // Primer día del mes actual
-            $fechaFin = date('Y-m-t'); // Último día del mes actual
+            // Obtener la fecha del mes de febrero
+            $fechaInicio = '2024-02-01'; // Primer día de febrero
+            $fechaFin = '2024-02-28'; // Último día de febrero
     
             // Filtrar audiencias con estatus 'Concluida'
             $audienciasCount = Audiencia::conciliacionAudiencias($fechaInicio, $fechaFin)
-                #->where('estatus', 'Concluida') // Agregar filtro por estatus
+                ->where('estatus', 'Concluida') // Agregar filtro por estatus
                 ->count();
             return response()->json(['total_audiencias' => $audienciasCount]);
         }
