@@ -187,7 +187,7 @@ class AudienciasController extends Controller
             $result = $audienciasCount->map(function ($item) {
             });
 
-            $count = $result->count();
+            $count = $result->count()->where('estatus','Finalizada');
 
             return response()->json(['total_audiencias' => $count]);
         }
