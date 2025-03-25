@@ -184,7 +184,12 @@ class AudienciasController extends Controller
     
             $audienciasCount = Audiencia::conciliacionAudiencias($fechaInicio, $fechaFin)->get();
 
-            return response()->json(['total_audiencias' => $audienciasCount]);
+            $result = $audienciasCount->map(function ($item) {
+            });
+
+            $count = $result->count();
+
+            return response()->json(['total_audiencias' => $count]);
         }
 
 }
