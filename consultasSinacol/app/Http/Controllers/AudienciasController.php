@@ -13,11 +13,10 @@ class AudienciasController extends Controller
 {
     public function getAudienciasPorDia(Request $request)
         {
-            $centroId = 38;
             // Obtener la fecha del request o usar la fecha actual
             $fecha = $request->input('fecha', date('Y-m-d'));
     
-            $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha, $centroId )->get();
+            $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
     
             // Formatear los resultados para incluir los campos requeridos
             $result = $audiencias->map(function ($item) {
@@ -63,9 +62,8 @@ class AudienciasController extends Controller
         {
             // Obtener la fecha del request o usar la fecha actual
             $fecha = "2024-10-25";
-            $centroId = 38;
     
-            $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha,$centroId)->get();
+            $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
     
             // Formatear los resultados para incluir los campos requeridos
             $result = $audiencias->map(function ($item) {
@@ -134,10 +132,9 @@ class AudienciasController extends Controller
         public function getTotalAudiencias(Request $request)
         {
             // Obtener la fecha del request o usar la fecha actual
-            $centroId = 38;
             $fecha = $request->input('fecha', date('Y-m-d'));
     
-            $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha,  $centroId )->get();
+            $audiencias = Audiencia::conciliacionAudiencias($fecha, $fecha)->get();
     
             // Formatear los resultados para incluir los campos requeridos
             $result = $audiencias->map(function ($item) {
@@ -181,12 +178,11 @@ class AudienciasController extends Controller
 
         public function getTotalAudienciasCount(Request $request)
         {
-            $centroId = 38;
             // Obtener la fecha del mes de febrero
             $fechaInicio = "2025-02-01"; // Primer día de febrero
             $fechaFin = "2025-02-28"; // Último día de febrero
     
-            $audienciasCount = Audiencia::conciliacionAudiencias($fechaInicio, $fechaFin, $centroId)->get();
+            $audienciasCount = Audiencia::conciliacionAudiencias($fechaInicio, $fechaFin)->get();
 
             $result = $audienciasCount->map(function ($item) {
             });

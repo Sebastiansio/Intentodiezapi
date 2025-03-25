@@ -55,7 +55,7 @@ class Audiencia extends Model implements Auditable
             ->where('audiencias.fecha_audiencia', $fechaAudiencia);
     }
 
-    public function scopeConciliacionAudiencias($query, $fechaInicio, $fechaFin, $centroId )
+    public function scopeConciliacionAudiencias($query, $fechaInicio, $fechaFin, $centroId = 38)
     {
         return $query
             ->select([
