@@ -50,7 +50,7 @@ class Audiencia extends Model implements Auditable
             ->join('solicitudes', function ($join) {
                 $join->on('partes.solicitud_id', '=', 'solicitudes.id')
                      ->where('solicitudes.inmediata', false)
-                     ->where('solicitudes.centro_id', '38');
+                     ->whereIn('solicitudes.centro_id', [38, 48]);
             })
             ->where('audiencias.fecha_audiencia', $fechaAudiencia);
     }
@@ -110,6 +110,9 @@ class Audiencia extends Model implements Auditable
             ->orderBy('fecha_evento')
             ->orderBy('hora_inicio');
     }
+
+    #resolucion de audiencias
+    
     public function transformAudit($data):array
     {
         if (Arr::has($data, 'new_values.finalizada')) {
