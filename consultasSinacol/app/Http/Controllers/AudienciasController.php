@@ -50,6 +50,7 @@ class AudienciasController extends Controller
                     'Hora Fin' => $item->hora_termino,
                     'Conciliador' => $item->conciliador,
                     'Estatus' => $item->estatus,
+                    'Virtual' => $item->virtual,
                     'Solicitantes' => $solicitantesArray,
                     'Citados' => $citadosArray,
                 ];

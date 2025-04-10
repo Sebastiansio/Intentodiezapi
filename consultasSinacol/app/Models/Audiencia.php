@@ -77,6 +77,7 @@ class Audiencia extends Model implements Auditable
                     pc.nombre, ' ', pc.primer_apellido, ' ', pc.segundo_apellido, ' ', COALESCE(pc.nombre_comercial, '')
                 )))), '[]') AS citados"),
                 DB::raw("'Audiencia' AS tipo_evento"),
+                DB::raw("s.virtual::boolean AS virtual"),
             ])
             ->leftJoin('conciliadores_audiencias AS ca', 'ca.audiencia_id', '=', 'audiencias.id')
             ->leftJoin('conciliadores AS c', 'c.id', '=', 'ca.conciliador_id')
@@ -106,6 +107,7 @@ class Audiencia extends Model implements Auditable
                 'audiencias.hora_inicio',
                 'audiencias.hora_fin',
                 'audiencias.finalizada',
+                's.virtual',
             ])
             ->orderBy('fecha_evento')
             ->orderBy('hora_inicio');
