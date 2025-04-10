@@ -52,6 +52,7 @@ class AudienciasController extends Controller
                     'Estatus' => $item->estatus,
                     'url_virtual' => $item->url_virtual,
                     'Virtual' => $item->virtual,
+                    'centroId' => $item->centroId,
                     'Solicitantes' => $solicitantesArray,
                     'Citados' => $citadosArray,
                 ];

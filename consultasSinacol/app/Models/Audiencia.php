@@ -55,7 +55,7 @@ class Audiencia extends Model implements Auditable
             ->where('audiencias.fecha_audiencia', $fechaAudiencia);
     }
 
-    public function scopeConciliacionAudiencias($query, $fechaInicio, $fechaFin, $centroId = 38)
+    public function scopeConciliacionAudiencias($query, $fechaInicio, $fechaFin)
     {
         return $query
             ->select([
@@ -79,6 +79,7 @@ class Audiencia extends Model implements Auditable
                 DB::raw("'Audiencia' AS tipo_evento"),
                 DB::raw("s.virtual::boolean AS virtual"),
                 DB::raw("s.url_virtual::text AS url_virtual"),
+                DB::raw("s.centroId::int AS centroId"),
             ])
             ->leftJoin('conciliadores_audiencias AS ca', 'ca.audiencia_id', '=', 'audiencias.id')
             ->leftJoin('conciliadores AS c', 'c.id', '=', 'ca.conciliador_id')
@@ -96,7 +97,6 @@ class Audiencia extends Model implements Auditable
                      ->where('pc.tipo_parte_id', '=', 2);
             })
             ->whereBetween('audiencias.fecha_audiencia', [$fechaInicio, $fechaFin])
-            ->where('s.centro_id', $centroId)
             ->where('s.inmediata', false)
             ->groupBy([
                 's.folio',
@@ -110,6 +110,7 @@ class Audiencia extends Model implements Auditable
                 'audiencias.finalizada',
                 's.virtual',
                 'url_virtual',
+                's.centroId',
             ])
             ->orderBy('fecha_evento')
             ->orderBy('hora_inicio');
