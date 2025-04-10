@@ -78,7 +78,7 @@ class Audiencia extends Model implements Auditable
                 )))), '[]') AS citados"),
                 DB::raw("'Audiencia' AS tipo_evento"),
                 DB::raw("s.virtual::boolean AS virtual"),
-                DB::raw("s.url_virtual,::text AS url_virtual"),
+                DB::raw("s.url_virtual::text AS url_virtual"),
             ])
             ->leftJoin('conciliadores_audiencias AS ca', 'ca.audiencia_id', '=', 'audiencias.id')
             ->leftJoin('conciliadores AS c', 'c.id', '=', 'ca.conciliador_id')
