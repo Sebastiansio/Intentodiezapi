@@ -121,12 +121,18 @@ class AudienciasController extends Controller
         
             // Obtener el parámetro 'folio' desde la URL
             $folio = $request->query('folio', null);
+
         
             // Verificar si el folio existe en la base de datos
             $exists = Expediente::where('folio', $folio)->exists();
-        
-            // Retornar respuesta JSON
-            return response()->json(['exists' => $exists]);
+
+            if ($exists = true){
+                // Retornar respuesta JSON
+                return response()->json("El folio " + ['exists' => $exists] + " existe");
+            }else{
+                return response()->json("El folio no existe en el sistema, verifica que sea correcto.");
+            }
+
         }
 
         public function getTotalAudiencias(Request $request)
@@ -190,6 +196,27 @@ class AudienciasController extends Controller
             $count = $result->count();
 
             return response()->json(['total_audiencias' => $count]);
+        }
+
+        public function datosSolicitud(Request $request)
+        {
+            // Validar el parámetro 'folio' desde los parámetros de consulta
+            $request->validate([
+                'folio' => 'required|string',
+            ]);
+        
+            // Obtener el parámetro 'folio' desde la URL
+            $folio = $request->query('folio', null);
+        
+            // Verificar si el folio existe en la base de datos
+            $exists = Expediente::where('folio', $folio)->exists();
+
+
+        
+            // Retornar respuesta JSON
+            return response()->json(['exists' => $exists]);
+
+
         }
 
 }
