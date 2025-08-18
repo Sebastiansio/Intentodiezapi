@@ -1,17 +1,17 @@
 <?php
 namespace App\Http\Controllers;
-
-
 use Carbon\Carbon;
 use App\Models\Audiencia;
-use App\Http\Controllers\DB;
+// use App\Http\Controllers\DB;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
 use App\Models\Expediente;
-
+use App\Models\Solicitud;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Http\JsonResponse;
 class AudienciasController extends Controller
 {
-    public function getAudienciasPorDia(Request $request)
+    public function getAudienciasPorDia(Request $request): JsonResponse
         {
             // Obtener la fecha del request o usar la fecha actual
             $fecha = $request->input('fecha', date('Y-m-d'));
@@ -61,7 +61,7 @@ class AudienciasController extends Controller
             return response()->json($result);
         }
 
-        public function getAudienciasDiaSiguiente(Request $request)
+    public function getAudienciasDiaSiguiente(Request $request)
         {
             // Obtener la fecha del request o usar la fecha actual
             $fecha = "2024-10-25";
@@ -107,7 +107,7 @@ class AudienciasController extends Controller
     
             return response()->json($result);
         }
-        
+
         public function getMundo(){
 
             $mundo = "Hola mundo";
@@ -115,30 +115,119 @@ class AudienciasController extends Controller
             return response()->json($mundo);
         }
 
-        public function checkFolioExists(Request $request)
-        {
-            // Validar el parámetro 'folio' desde los parámetros de consulta
-            $request->validate([
-                'folio' => 'required|string',
-            ]);
-        
-            // Obtener el parámetro 'folio' desde la URL
-            $folio = $request->query('folio', null);
+    public function checkFolioExistsAMG(Request $request)
+    {
+        // Validate the 'folio' parameter from the request
+        $request->validate([
+            'folio' => 'required|string',
+        ]);
 
-        
-            // Verificar si el folio existe en la base de datos
-            $exists = Expediente::where('folio', $folio)->exists();
+        // Get the 'folio' parameter from the query
+        $folio = $request->input('folio');
 
-            if ($exists = true){
-                // Retornar respuesta JSON
-                return response()->json("El folio " + ['exists' => $exists] + " existe");
-            }else{
-                return response()->json("El folio no existe en el sistema, verifica que sea correcto.");
+        // Check if the folio exists in the database
+        $exists = Solicitud::where('folio', $folio)->exists();
+
+        // Get the 'centro_id' associated with the 'folio'
+        $centro_id = Solicitud::where('folio', $folio)->value('centro_id');
+
+        // Check the existence and centro_id
+        if ($exists) {
+            if ($centro_id == 38) {
+                return response()->json([
+                    'exists' => $exists,
+                    'message' => "El folio existe en el sistema."
+                ]);
+            } else {
+                return response()->json([
+                    'exists' => $exists,
+                    'message' => "El folio existe en el sistema, pero no corresponde a la sede que quiere realizar la cita."
+                ]);
             }
-
+        } else {
+            return response()->json([
+                'exists' => $exists,
+                'message' => "El folio no existe en el sistema, verifica que sea correcto."
+            ]);
         }
+    }
 
-        public function getTotalAudiencias(Request $request)
+    public function checkFolioExistsTLJ(Request $request)
+    {
+        // Validate the 'folio' parameter from the request
+        $request->validate([
+            'folio' => 'required|string',
+        ]);
+
+        // Get the 'folio' parameter from the query
+        $folio = $request->input('folio');
+
+        // Check if the folio exists in the database
+        $exists = Solicitud::where('folio', $folio)->exists();
+
+        // Get the 'centro_id' associated with the 'folio'
+        $centro_id = Solicitud::where('folio', $folio)->value('centro_id');
+
+        // Check the existence and centro_id
+        if ($exists) {
+            if ($centro_id == 48) {
+                return response()->json([
+                    'exists' => $exists,
+                    'message' => "El folio existe en el sistema."
+                ]);
+            } else {
+                return response()->json([
+                    'exists' => $exists,
+                    'message' => "El folio existe en el sistema, pero no corresponde a la sede que quiere realizar la cita."
+                ]);
+            }
+        } else {
+            return response()->json([
+                'exists' => $exists,
+                'message' => "El folio no existe en el sistema, verifica que sea correcto."
+            ]);
+        }
+    }
+
+    public function checkFolioExistsPV(Request $request)
+    {
+        // Validate the 'folio' parameter from the request
+        $request->validate([
+            'folio' => 'required|string',
+        ]);
+
+        // Get the 'folio' parameter from the query
+        $folio = $request->input('folio');
+
+        // Check if the folio exists in the database
+        $exists = Solicitud::where('folio', $folio)->exists();
+
+        // Get the 'centro_id' associated with the 'folio'
+        $centro_id = Solicitud::where('folio', $folio)->value('centro_id');
+
+        // Check the existence and centro_id
+        if ($exists) {
+            if ($centro_id == 39) {
+                return response()->json([
+                    'exists' => $exists,
+                    'message' => "El folio existe en el sistema."
+                ]);
+            } else {
+                return response()->json([
+                    'exists' => $exists,
+                    'message' => "El folio existe en el sistema, pero no corresponde a la sede que quiere realizar la cita."
+                ]);
+            }
+        } else {
+            return response()->json([
+                'exists' => $exists,
+                'message' => "El folio no existe en el sistema, verifica que sea correcto."
+            ]);
+        }
+    }
+
+
+    public function getTotalAudiencias(Request $request)
         {
             // Obtener la fecha del request o usar la fecha actual
             $fecha = $request->input('fecha', date('Y-m-d'));
@@ -201,25 +290,45 @@ class AudienciasController extends Controller
             return response()->json(['total_audiencias' => $count]);
         }
 
-        public function datosSolicitud(Request $request)
-        {
-            // Validar el parámetro 'folio' desde los parámetros de consulta
-            $request->validate([
-                'folio' => 'required|string',
-            ]);
-        
-            // Obtener el parámetro 'folio' desde la URL
-            $folio = $request->query('folio', null);
-        
-            // Verificar si el folio existe en la base de datos
-            $exists = Expediente::where('folio', $folio)->exists();
+    public function datosSolicitud(string $folio, int $anio): JsonResponse
+    {
 
+        // 3) Ejecutar la consulta, filtrando por folio, año y centro
+        $registro = DB::table('solicitudes as s')
+            ->selectRaw("
+                CONCAT(s.folio, '/', s.anio) AS folio_solicitud,
+                CONCAT_WS(' ',
+                    ps.nombre, ps.primer_apellido, ps.segundo_apellido
+                ) AS nombre_parte1,
+                s.centro_id,
+                ps.curp AS curp_parte1,
+                co.contacto AS contacto_parte1,
+                pc.nombre_comercial AS nombre_comercial_parte2
+            ")
+            ->leftJoin('partes as ps', function($j){
+                $j->on('ps.solicitud_id','s.id')
+                  ->where('ps.tipo_parte_id', 1);
+            })
+            ->leftJoin('contactos as co','co.contactable_id','ps.id')
+            ->leftJoin('partes as pc', function($j){
+                $j->on('pc.solicitud_id','s.id')
+                  ->where('pc.tipo_parte_id', 2);
+            })
+            ->where('s.folio',     $folio)
+            ->where('s.anio',      $anio)
+            ->orderByDesc('co.id')
+            ->limit(1)
+            ->first();
 
-        
-            // Retornar respuesta JSON
-            return response()->json(['exists' => $exists]);
-
-
+        // 4) Si no existe, devolvemos 404
+        if (! $registro) {
+            return response()->json([
+                'message' => "No se encontró la solicitud {$folio}/{$anio} "
+            ], 404);
         }
+
+        // 5) Devolvemos el registro en JSON
+        return response()->json($registro);
+    }
 
 }

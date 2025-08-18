@@ -146,7 +146,7 @@ class Solicitud extends Model implements Auditable
 
     public function partes()
     {
-        return $this->hasMany('App\Parte', 'solicitud_id', 'id');
+        return $this->hasMany('App\Models\Parte', 'solicitud_id', 'id');
     }
 
     public function solicitantes()

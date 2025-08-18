@@ -24,3 +24,4 @@ Route::get('/mundo', [AudienciasController::class, 'getMundo']);
 Route::get('/audiencias/por-dia', [AudienciasController::class, 'getAudienciasPorDia']);
 Route::post('/expedientes/check-folio', [AudienciasController::class, 'checkFolioExists']);
 Route::get('/audiencias/coutconcluidas', [AudienciasController::class, 'getTotalAudienciasCount']);
+Route::post('/citas/datos-solicitud', [AudienciasController::class, 'datosSolicitud']);
