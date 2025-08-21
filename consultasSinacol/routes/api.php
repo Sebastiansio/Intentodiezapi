@@ -20,6 +20,5 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 Route::get('citas/datos-solicitud/{folio}/{anio}', [AudienciasController::class, 'datosSolicitud'])
     ->where([
         'folio' => '[a-zA-Z0-9\-]+', // Allows alphanumeric characters and hyphens
-        'anio' => '[0-9]{4}',      // Requires a 4-digit number for the year
-        'centro_id' => '[0-9]+'     // Requires a numeric ID
+        'anio' => '[0-9]{4}',      // Requires a 4-digit number for the year     // Requires a numeric ID
     ]);
