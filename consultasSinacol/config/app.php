@@ -54,6 +54,17 @@ return [
 
     'url' => env('APP_URL', 'http://localhost'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | API Token
+    |--------------------------------------------------------------------------
+    ||
+    | This token is used for API authentication. Set this in your ".env" file.
+    |
+    */
+
+    'api_token' => env('API_TOKEN', 'default_secret_token_change_this'),
+
     'asset_url' => env('ASSET_URL', null),
 
     /*

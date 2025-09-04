@@ -189,42 +189,7 @@ class AudienciasController extends Controller
         }
     }
 
-    public function checkFolioExistsPV(Request $request)
-    {
-        // Validate the 'folio' parameter from the request
-        $request->validate([
-            'folio' => 'required|string',
-        ]);
 
-        // Get the 'folio' parameter from the query
-        $folio = $request->input('folio');
-
-        // Check if the folio exists in the database
-        $exists = Solicitud::where('folio', $folio)->exists();
-
-        // Get the 'centro_id' associated with the 'folio'
-        $centro_id = Solicitud::where('folio', $folio)->value('centro_id');
-
-        // Check the existence and centro_id
-        if ($exists) {
-            if ($centro_id == 39) {
-                return response()->json([
-                    'exists' => $exists,
-                    'message' => "El folio existe en el sistema."
-                ]);
-            } else {
-                return response()->json([
-                    'exists' => $exists,
-                    'message' => "El folio existe en el sistema, pero no corresponde a la sede que quiere realizar la cita."
-                ]);
-            }
-        } else {
-            return response()->json([
-                'exists' => $exists,
-                'message' => "El folio no existe en el sistema, verifica que sea correcto."
-            ]);
-        }
-    }
 
 
     public function getTotalAudiencias(Request $request)
@@ -290,8 +255,17 @@ class AudienciasController extends Controller
             return response()->json(['total_audiencias' => $count]);
         }
 
-    public function datosSolicitud(string $folio, int $anio): JsonResponse
+    public function datosSolicitud(Request $request, string $folio, int $anio): JsonResponse
     {
+        // Validar token de API
+        $token = $request->header('Authorization');
+        $expectedToken = 'Bearer ' . config('app.api_token');
+        
+        if ($token !== $expectedToken) {
+            return response()->json([
+                'message' => 'Token de autorización inválido'
+            ], 401);
+        }
 
         // 3) Ejecutar la consulta, filtrando por folio, año y centro
         $registro = DB::table('solicitudes as s')
