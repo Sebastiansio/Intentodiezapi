@@ -283,6 +283,17 @@ class Parte extends Model implements Auditable
     {
         return $this->hasMany(DatoLaboral::class);
     }
+
+    /**
+     * Alias en camelCase para compatibilidad con el código que espera
+     * ->datosLaborales() (por ejemplo imports/servicios).
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\HasMany
+     */
+    public function datosLaborales()
+    {
+        return $this->dato_laboral();
+    }
     /**
      * Relacion con la tabla domicilio
      * @return type
@@ -303,7 +314,7 @@ class Parte extends Model implements Auditable
      * @return \Illuminate\Database\Eloquent\Relations\BelongsTo
      */
     public function lenguaIndigena(){
-      return $this->belongsTo('App\LenguaIndigena')->withDefault();
+      return $this->belongsTo('App\Models\LenguaIndigena')->withDefault();
     }
     /**
      * Funcion para asociar con modelo tipoDiscapacidad

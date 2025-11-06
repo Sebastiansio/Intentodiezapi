@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\AudienciasController;
+use App\Http\Controllers\CargaMasivaController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -25,3 +26,6 @@ Route::get('/audiencias/por-dia', [AudienciasController::class, 'getAudienciasPo
 Route::post('/expedientes/check-folio', [AudienciasController::class, 'checkFolioExists']);
 Route::get('/audiencias/coutconcluidas', [AudienciasController::class, 'getTotalAudienciasCount']);
 Route::post('/citas/datos-solicitud', [AudienciasController::class, 'datosSolicitud']);
+
+Route::get('/carga-masiva', [CargaMasivaController::class, 'showUploadForm'])->name('carga.show');
+Route::post('/carga-masiva', [CargaMasivaController::class, 'handleUpload'])->name('carga.handle');
