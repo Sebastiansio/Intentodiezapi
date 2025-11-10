@@ -1,12 +1,12 @@
 <?php
 namespace App\Http\Controllers;
 use Carbon\Carbon;
-use App\Models\Audiencia;
+use App\Audiencia;
 // use App\Http\Controllers\DB;
 use Illuminate\Http\Request;
 use App\Http\Controllers\Controller;
-use App\Models\Expediente;
-use App\Models\Solicitud;
+use App\Expediente;
+use App\Solicitud;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
 class AudienciasController extends Controller
