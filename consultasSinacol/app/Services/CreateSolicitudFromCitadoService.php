@@ -15,6 +15,7 @@ use App\FirmaDocumento;
   // Asegúrate de importar tus modelos
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Carbon\Carbon;
 
 class CreateSolicitudFromCitadoService
 {
@@ -36,96 +37,168 @@ class CreateSolicitudFromCitadoService
                 // Obtener el siguiente folio de manera segura
                 $max_folio = Solicitud::where('anio', date('Y'))->max('folio') + 1;
 
+                Log::info('CreateSolicitud: Iniciando creación', ['citado' => $citadoData['nombre'] ?? 'UNKNOWN']);
 
                 // 1. Insertar la Solicitud
+                // Normalizar y convertir algunos campos antes de insertar
+                $fechaConflicto = $this->parseDate($citadoData['fecha_conflicto'] ?? null);
+                $salario = isset($citadoData['salario']) ? (float)$citadoData['salario'] : null;
+
+                Log::debug('CreateSolicitud: Creando Solicitud', ['folio' => $max_folio, 'fecha_conflicto' => $fechaConflicto]);
+
                 $solicitud = Solicitud::create([
                     'folio' => $max_folio,
                     'anio' => date('Y'),
                     'fecha_recepcion' => now(),
-                    'fecha_conflicto' => $citadoData['fecha_conflicto'],
+                    'fecha_conflicto' => $fechaConflicto,
                     'estatus_solicitud_id' => 1,
                     'centro_id' => 38,
-                    'giro_comercial_id' => GiroComercial::where('nombre', $citadoData['giro_comercial_id'])->value('id'),
+                    // giro_comercial_id puede venir como ID o como nombre desde el formulario/import
+                    'giro_comercial_id' => (is_numeric($citadoData['giro_comercial_id'] ?? null))
+                        ? (int)$citadoData['giro_comercial_id']
+                        : GiroComercial::where('nombre', $citadoData['giro_comercial_id'] ?? '')->value('id'),
                     'ratificada' => false,
                     'solicita_excepcion' => false,
                     'code_estatus' => 'sin_confirmar',
-                    'tipo_solicitud_id' => 2,
+                    // aceptar tipo_solicitud_id del formulario si fue enviado
+                    'tipo_solicitud_id' => isset($citadoData['tipo_solicitud_id']) ? (int)$citadoData['tipo_solicitud_id'] : 2,
                 ]);
 
+                Log::info('CreateSolicitud: Solicitud creada con ID ' . $solicitud->id);
+                $solicitanteData = $citadoData['solicitante'] ?? [];
 
-                // === INICIO: Lógica del SOLICITANTE (Patrón) [HARDCODEADO] ===
+                // Determinar tipo_persona (1=fisica, 2=moral). Fallback a 1.
+                $tipoPersona = isset($solicitanteData['tipo_persona_id']) ? (int)$solicitanteData['tipo_persona_id'] : 1;
 
-                // Reemplaza: INSERT INTO partes (tipo_parte_id = 1) ...
-                $parteSolicitante = $solicitud->partes()->create([
-                    'nombre_comercial' => 'EMPRESA DE ROPA MODERNA SA DE CV (Prueba)',
-                    'rfc' => 'AASS890220QC3',
+                // Campos para crear la parte solicitante
+                $parteFields = [
                     'tipo_parte_id' => 1, // 1 = Solicitante
-                    'tipo_persona_id' => 2, // 2 = Moral
-                ]);
-                
-                // Reemplaza: INSERT INTO domicilios (solicitante) ...
-                $parteSolicitante->domicilios()->create([
-                    'estado_id' => 14, // ID de Estado
-                    'municipio' => 'IZTACALCO', 
-                    'cp' => '52371', 
-                    'tipo_vialidad_id' => 3, // ID Tipo Vialidad (CALLE)
-                    'tipo_vialidad' => 'CALLE', // <-- Esta es la columna 'tipo_vialidad' de texto
-                    'vialidad' => 'CALLE', // Nombre Vialidad (de tu SQL)
-                    'num_ext' => '5510', 
-                    'num_int' => '25-A', 
-                    'asentamiento' => 'CONDESA', 
-                    'centro_id' => 38, 
-                    'estado' => 'jalisco', 
-                ]);
+                    'tipo_persona_id' => $tipoPersona,
+                ];
 
-                
-                // Reemplaza: INSERT INTO contactos (solicitante) ...
-                $parteSolicitante->contactos()->create([
-                    'tipo_contacto_id' => 1, // Asumiendo 1 = Celular
-                    'contacto' => '1234567890', // Teléfono (de tu SQL)
-                ]);
-                $parteSolicitante->contactos()->create([
-                    'tipo_contacto_id' => 3, // Asumiendo 3 = Email
-                    'contacto' => 'citado@gmail.com', // Email (de tu SQL)
-                ]);
+                if ($tipoPersona === 2) {
+                    // Persona moral
+                    $parteFields['nombre_comercial'] = $solicitanteData['nombre_comercial'] ?? null;
+                    $parteFields['rfc'] = $solicitanteData['rfc'] ?? null;
+                } else {
+                    // Persona física
+                    $parteFields['nombre'] = $solicitanteData['nombre'] ?? null;
+                    $parteFields['primer_apellido'] = $solicitanteData['primer_apellido'] ?? null;
+                    $parteFields['segundo_apellido'] = $solicitanteData['segundo_apellido'] ?? null;
+                    $parteFields['curp'] = $solicitanteData['curp'] ?? null;
+                    // rfc para persona fisica (campo opcional en el formulario)
+                    if (!empty($solicitanteData['rfc'])) {
+                        $parteFields['rfc'] = $solicitanteData['rfc'];
+                    } elseif (!empty($solicitanteData['rfc_fisica'])) {
+                        $parteFields['rfc'] = $solicitanteData['rfc_fisica'];
+                    }
+                }
 
-                // === FIN: Lógica del SOLICITANTE (Patrón) [HARDCODEADO] ===
+                // Crear la parte solicitante
+                $parteSolicitante = $solicitud->partes()->create($parteFields);
+
+                // Domicilio del solicitante (si viene)
+                $domicilios = $solicitanteData['domicilios'] ?? [];
+                if (!empty($domicilios) && is_array($domicilios)) {
+                    $dom = $domicilios[0];
+                    $tipoVialidadId = isset($dom['tipo_vialidad_id']) ? $dom['tipo_vialidad_id'] : (isset($dom['tipo_vialidad']) ? TipoVialidad::where('nombre', 'ilike', $dom['tipo_vialidad'])->value('id') : null);
+                    $estadoId = isset($dom['estado_id']) ? $dom['estado_id'] : (isset($dom['estado']) ? Estado::where('nombre', 'ilike', $dom['estado'])->value('id') : null);
+                    
+                    // Obtener el nombre de tipo_vialidad si solo viene el ID
+                    $tipoVialidadNombre = $dom['tipo_vialidad'] ?? null;
+                    if (!$tipoVialidadNombre && $tipoVialidadId) {
+                        $tipoVialidadNombre = TipoVialidad::find($tipoVialidadId)->nombre ?? 'CALLE';
+                    }
+                    if (!$tipoVialidadNombre) {
+                        $tipoVialidadNombre = 'CALLE';
+                    }
+                    
+                    // Obtener nombre de estado si solo viene el ID
+                    $estadoNombre = $dom['estado'] ?? null;
+                    if (!$estadoNombre && $estadoId) {
+                        $estadoNombre = Estado::find($estadoId)->nombre ?? null;
+                    }
+
+                    $parteSolicitante->domicilios()->create([
+                        'estado_id' => $estadoId ?? 14,
+                        'municipio' => $dom['municipio'] ?? null,
+                        'cp' => $dom['cp'] ?? null,
+                        'tipo_vialidad_id' => $tipoVialidadId ?? 3,
+                        'tipo_vialidad' => $tipoVialidadNombre,
+                        'vialidad' => $dom['vialidad'] ?? null,
+                        'num_ext' => $dom['num_ext'] ?? null,
+                        'num_int' => $dom['num_int'] ?? null,
+                        'asentamiento' => $dom['asentamiento'] ?? null,
+                        'centro_id' => $solicitud->centro_id ?? null,
+                        'estado' => $estadoNombre,
+                    ]);
+                }
+
+                // Contactos del solicitante
+                $contactos = $solicitanteData['contactos'] ?? [];
+                if (!empty($contactos) && is_array($contactos)) {
+                    foreach ($contactos as $cont) {
+                        // Esperamos ['tipo_contacto_id'=>int, 'contacto'=>string]
+                        if (!empty($cont['contacto'])) {
+                            $parteSolicitante->contactos()->create([
+                                'tipo_contacto_id' => $cont['tipo_contacto_id'] ?? 1,
+                                'contacto' => $cont['contacto'],
+                            ]);
+                        }
+                    }
+                }
+
+                // === FIN: Lógica del SOLICITANTE ===
 
                 // 2. Insertar la Parte (Citado) usando la relación de Eloquent
+                // Normalizar campos del citado
+                $citadoNombre = $citadoData['nombre'] ?? null;
+                $citadoPrimer = $citadoData['primer_apellido'] ?? null;
+                $citadoSegundo = $citadoData['segundo_apellido'] ?? null;
+                $citadoCurp = $citadoData['curp'] ?? null;
+
                 $citadoParte = $solicitud->partes()->create([
-                    'nombre' => $citadoData['nombre'],
-                    'primer_apellido' => $citadoData['primer_apellido'],
-                    'segundo_apellido' => $citadoData['segundo_apellido'],
+                    'nombre' => $citadoNombre,
+                    'primer_apellido' => $citadoPrimer,
+                    'segundo_apellido' => $citadoSegundo,
                     'tipo_parte_id' => 2, // 2 = Citado
                     'tipo_persona_id' => 1, // 1 = Física
-                    'curp' => $citadoData['curp'],
+                    'curp' => $citadoCurp,
                 ]);
 
                 // 3. Insertar el Contacto usando relaciones polimórficas
-                $citadoParte->contactos()->create([
-                    'tipo_contacto_id' => TipoContacto::where('nombre', strtoupper($citadoData['tipo_contacto']))->value('id'),
-                    'contacto' => $citadoData['correo'],
-                ]);
+                // Crear contacto del citado: aceptar 'correo' o 'contacto' o 'telefono'
+                $contactValue = $citadoData['correo'] ?? ($citadoData['contacto'] ?? ($citadoData['telefono'] ?? null));
+                $tipoContactoName = $citadoData['tipo_contacto'] ?? null;
+                $tipoContactoId = $tipoContactoName ? TipoContacto::where('nombre', strtoupper($tipoContactoName))->value('id') : null;
+                if ($contactValue) {
+                    $citadoParte->contactos()->create([
+                        'tipo_contacto_id' => $tipoContactoId ?? TipoContacto::where('nombre', 'TELEFONO')->value('id') ?? 1,
+                        'contacto' => (string)$contactValue,
+                    ]);
+                }
 
                 // 4. Insertar Datos Laborales
+                Log::debug('CreateSolicitud: Creando DatosLaborales', ['puesto' => $citadoData['puesto'] ?? null]);
+                
                 $citadoParte->datosLaborales()->create([
-                    'nss' => $citadoData['nss'],
-                    'puesto' => $citadoData['puesto'],
-                    'remuneracion' => $citadoData['salario'],
-                    'fecha_ingreso' => $citadoData['fecha_ingreso'],
-                    'fecha_salida' => $citadoData['fecha_salida'],
-                    'jornada_id' => Jornada::where('nombre', strtoupper($citadoData['jornada']))->value('id'),
-                    'periodicidad_id' => Periodicidad::where('nombre', 'ilike', $citadoData['periocidad'])->value('id'),
-                    'ocupacion_id' => Ocupacion::where('nombre', 'ilike', '%' . $citadoData['puesto'] . '%')->value('id'),
+                    'nss' => $citadoData['nss'] ?? null,
+                    'puesto' => $citadoData['puesto'] ?? null,
+                    'remuneracion' => $citadoData['salario'] ?? null,
+                    'fecha_ingreso' => $this->parseDate($citadoData['fecha_ingreso'] ?? null),
+                    'fecha_salida' => $this->parseDate($citadoData['fecha_salida'] ?? null),
+                    'jornada_id' => ($citadoData['jornada'] ?? null) ? Jornada::where('nombre', strtoupper((string)$citadoData['jornada']))->value('id') : null,
+                    'periodicidad_id' => ($citadoData['periocidad'] ?? null) ? Periodicidad::where('nombre', 'ilike', $citadoData['periocidad'])->value('id') : null,
+                    'ocupacion_id' => ($citadoData['puesto'] ?? null) ? Ocupacion::where('nombre', 'ilike', '%' . $citadoData['puesto'] . '%')->value('id') : null,
                     'labora_actualmente' => true,
-                    'horas_semanales' => $citadoData['horas_sem'],
-                    'horario_laboral' => $citadoData['horario_laboral'],
-                    'horario_comida' => $citadoData['horario_comida'],
+                    'horas_semanales' => $citadoData['horas_sem'] ?? null,
+                    'horario_laboral' => $citadoData['horario_laboral'] ?? null,
+                    'horario_comida' => $citadoData['horario_comida'] ?? null,
                     'comida_dentro' => true,
-                    'dias_descanso' => $citadoData['dias_descanso'],
-                    'dias_vacaciones' => $citadoData['dias_vacaciones'],
-                    'dias_aguinaldo' => $citadoData['dias_aguinaldo'],
-                    'prestaciones_adicionales' => $citadoData['prestaciones_adicionales'],
+                    'dias_descanso' => $citadoData['dias_descanso'] ?? null,
+                    'dias_vacaciones' => $citadoData['dias_vacaciones'] ?? null,
+                    'dias_aguinaldo' => $citadoData['dias_aguinaldo'] ?? null,
+                    'prestaciones_adicionales' => $citadoData['prestaciones_adicionales'] ?? null,
                 ]);
                 
                 // 5. Insertar Domicilio (SECCIÓN MEJORADA - normaliza claves y asegura valores no nulos)
@@ -173,7 +246,12 @@ class CreateSolicitudFromCitadoService
 
 
                 // 6. Otras relaciones (objetos, firmas, etc.)
-                $solicitud->objeto_solicitudes()->attach(4);
+                // Si el formulario incluyó objetos de solicitud (IDs), los adjuntamos.
+                if (!empty($citadoData['objeto_solicitudes']) && is_array($citadoData['objeto_solicitudes'])) {
+                    $solicitud->objeto_solicitudes()->sync($citadoData['objeto_solicitudes']);
+                } else {
+                    $solicitud->objeto_solicitudes()->attach(4);
+                }
 
 
 
@@ -201,5 +279,39 @@ class CreateSolicitudFromCitadoService
                 return null;
             }
         });
+    }
+
+    /**
+     * Intenta parsear una fecha en varios formatos y devolver YYYY-mm-dd o null.
+     */
+    private function parseDate($value)
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        $formats = [
+            'd/m/Y', 'd-m-Y', 'Y-m-d', 'd/m/Y H:i', 'd/m/Y H:i:s', 'd-m-Y H:i', 'd-m-Y H:i:s'
+        ];
+
+        foreach ($formats as $fmt) {
+            try {
+                $dt = Carbon::createFromFormat($fmt, trim($value));
+                if ($dt) {
+                    return $dt->toDateString();
+                }
+            } catch (\Exception $e) {
+                // intentar siguiente formato
+            }
+        }
+
+        // Último recurso: intentar que Carbon lo autodetecte
+        try {
+            $dt = new Carbon($value);
+            return $dt->toDateString();
+        } catch (\Exception $e) {
+            Log::warning('parseDate: no se pudo parsear fecha', ['value' => $value]);
+            return null;
+        }
     }
 }

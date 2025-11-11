@@ -17,7 +17,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
     return view('welcome');
-});
+})->name('home');
 
 
 Route::get('/audiencias/dia-siguiente', [AudienciasController::class, 'getAudienciasDiaSiguiente']);
@@ -29,3 +29,6 @@ Route::post('/citas/datos-solicitud', [AudienciasController::class, 'datosSolici
 
 Route::get('/carga-masiva', [CargaMasivaController::class, 'showUploadForm'])->name('carga.show');
 Route::post('/carga-masiva', [CargaMasivaController::class, 'handleUpload'])->name('carga.handle');
+
+// Ruta alternativa/compatibilidad para la vista de solicitudes masivas
+Route::post('/solicitud/masiva', [CargaMasivaController::class, 'handleUpload'])->name('solicitud.masiva.store');
