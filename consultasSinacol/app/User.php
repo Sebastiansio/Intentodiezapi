@@ -9,11 +9,8 @@ use App\Traits\RequestsAppends;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Lab404\Impersonate\Models\Impersonate;
-use Laravel\Passport\HasApiTokens;
 use OwenIt\Auditing\Auditable;
 use OwenIt\Auditing\Contracts\Auditable as AuditableContract;
-use Spatie\Permission\Traits\HasRoles;
 use Illuminate\Support\Facades\Auth;
 
 
@@ -21,13 +18,10 @@ class User extends Authenticatable implements AuditableContract
 {
     use Notifiable,
         SoftDeletes,
-        HasApiTokens,
         LazyLoads,
         LazyAppends,
         RequestsAppends,
         AppendPolicies,
-        HasRoles,
-        Impersonate,
         Auditable,
         \App\Traits\CambiarEventoAudit;
     public function transformAudit($data): array
@@ -119,9 +113,19 @@ class User extends Authenticatable implements AuditableContract
     {
         $this->attributes["centro_id"] = $centro_id;
 
-        if (Auth::check() && !auth()->user()->hasRole("Super Usuario")) {
-            $this->attributes["centro_id"] = auth()->user()->centro_id;
-        }
+        // Sin validación de roles - acepta cualquier centro_id
+        // if (Auth::check() && !auth()->user()->hasRole("Super Usuario")) {
+        //     $this->attributes["centro_id"] = auth()->user()->centro_id;
+        // }
+    }
+
+    /**
+     * Método dummy para compatibilidad - siempre retorna false
+     * Usado cuando se eliminó el paquete de roles y permisos
+     */
+    public function hasRole($role)
+    {
+        return false; // No hay sistema de roles
     }
 
     public function setPasswordAttribute($v)

@@ -4,13 +4,11 @@ namespace App;
 
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Spatie\Permission\Traits\HasRoles;
 use Illuminate\Support\Facades\Hash;
 
 class UsuariosPartesIntermedio extends Authenticatable
 {
-    use Notifiable,
-        HasRoles;
+    use Notifiable;
 
     protected $guarded = 'partes_intermedios';
 

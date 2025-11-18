@@ -9,10 +9,14 @@ use App\TipoContacto;
 use App\Jornada;
 use App\Periodicidad;
 use App\Ocupacion;
-use App\TipoVialidad; // Asegúrate de importar tus modelos
+use App\TipoVialidad;
 use App\Estado;    
 use App\FirmaDocumento;
-  // Asegúrate de importar tus modelos
+use App\Expediente;
+use App\Audiencia;
+use App\ConciliadorAudiencia;
+use App\SalaAudiencia;
+use App\AudienciaParte;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
@@ -264,16 +268,29 @@ class CreateSolicitudFromCitadoService
                 
                 // La inserción en firmas_documentos es más compleja y puede requerir su propio servicio
                 // por la naturaleza de la relación polimórfica.
+
+                Log::info('CreateSolicitud: Proceso completado con éxito', ['solicitud_id' => $solicitud->id]);
                 
-                Log::info("Solicitud creada exitosamente con ID: " . $solicitud->id);
-
+                // Crear audiencia automáticamente después de crear la solicitud
+                try {
+                    Log::info('CreateSolicitud: Iniciando creación de audiencia', ['solicitud_id' => $solicitud->id]);
+                    $this->createAudiencia($solicitud);
+                    Log::info('CreateSolicitud: Audiencia creada exitosamente', ['solicitud_id' => $solicitud->id]);
+                } catch (\Exception $e) {
+                    Log::error('Error al crear audiencia para solicitud: ' . $e->getMessage(), [
+                        'solicitud_id' => $solicitud->id,
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    // No lanzamos la excepción para que la solicitud se cree aunque falle la audiencia
+                }
+                
                 return $solicitud;
-
+                
             } catch (\Exception $e) {
                 // Si algo falla, se registra el error y la transacción se revierte.
-                Log::error('Error en la creación masiva de solicitud: ' . $e->getMessage(), [
-                    'trace' => $e->getTraceAsString(), // Agregamos más contexto al log
-                    'data' => $citadoData // Registramos los datos que fallaron
+                Log::error('Error en la creación de solicitud: ' . $e->getMessage(), [
+                    'trace' => $e->getTraceAsString(),
+                    'data' => $citadoData
                 ]);
                 // Retornamos null para indicar que la creación falló.
                 return null;
@@ -312,6 +329,199 @@ class CreateSolicitudFromCitadoService
         } catch (\Exception $e) {
             Log::warning('parseDate: no se pudo parsear fecha', ['value' => $value]);
             return null;
+        }
+    }
+
+    /**
+     * Crea una audiencia para una solicitud específica
+     * Valores hardcodeados para pruebas
+     */
+    private function createAudiencia(Solicitud $solicitud)
+    {
+        DB::beginTransaction();
+        try {
+            Log::info('CreateAudiencia: Iniciando creación de audiencia', ['solicitud_id' => $solicitud->id]);
+            
+            // Refrescar la solicitud para obtener todas las relaciones
+            $solicitud = Solicitud::with('partes')->find($solicitud->id);
+            
+            // Crear el expediente de la solicitud
+            $anio = date("Y");
+            
+            // Sistema robusto para generar folio único
+            $expediente = null;
+            $intentos = 0;
+            $max_intentos = 20;
+            
+            while ($expediente === null && $intentos < $max_intentos) {
+                try {
+                    // Obtener el max dentro del loop para tener el valor más actualizado
+                    $max_consecutivo = \App\Expediente::where('anio', $anio)->max('consecutivo');
+                    $consecutivo = ($max_consecutivo ?? 0) + 1 + $intentos; // Agregar intentos para evitar colisiones
+                    $folio = "EXP-" . $anio . "-" . str_pad($consecutivo, 5, "0", STR_PAD_LEFT);
+                    
+                    Log::info('CreateAudiencia: Intentando crear expediente', [
+                        'intento' => $intentos + 1,
+                        'consecutivo' => $consecutivo,
+                        'folio' => $folio,
+                        'max_consecutivo_actual' => $max_consecutivo
+                    ]);
+
+                    // Verificar si el folio ya existe antes de crear (doble verificación)
+                    if (\App\Expediente::where('folio', $folio)->exists()) {
+                        $intentos++;
+                        Log::warning('CreateAudiencia: Folio ya existe (verificación previa), reintentando', [
+                            'folio' => $folio,
+                            'intento' => $intentos
+                        ]);
+                        usleep(50000); // Esperar 50ms antes de reintentar
+                        continue;
+                    }
+
+                    $expediente = \App\Expediente::create([
+                        "solicitud_id" => $solicitud->id,
+                        "folio" => $folio,
+                        "anio" => $anio,
+                        "consecutivo" => $consecutivo
+                    ]);
+                    
+                    Log::info('CreateAudiencia: Expediente creado exitosamente', [
+                        'expediente_id' => $expediente->id,
+                        'folio' => $folio,
+                        'consecutivo' => $consecutivo
+                    ]);
+                    
+                } catch (\App\Exceptions\FolioExpedienteExistenteException $e) {
+                    $intentos++;
+                    Log::warning('CreateAudiencia: FolioExpedienteExistenteException capturada, reintentando', [
+                        'intento' => $intentos,
+                        'mensaje' => $e->getMessage()
+                    ]);
+                    usleep(50000); // Esperar 50ms antes de reintentar
+                } catch (\Exception $e) {
+                    $intentos++;
+                    Log::warning('CreateAudiencia: Error general al crear expediente, reintentando', [
+                        'intento' => $intentos,
+                        'error' => $e->getMessage()
+                    ]);
+                    usleep(50000); // Esperar 50ms antes de reintentar
+                }
+            }
+            
+            if ($expediente === null) {
+                throw new \Exception('No se pudo generar un folio único para el expediente después de ' . $max_intentos . ' intentos');
+            }
+
+            // Marcar partes como ratificadas si no tienen documentos
+            foreach ($solicitud->partes as $parte) {
+                if (count($parte->documentos) == 0) {
+                    $parte->ratifico = true;
+                    $parte->save();
+                }
+            }
+
+            // Obtener domicilio del citado
+            $domicilio_citado = null;
+            foreach ($solicitud->partes as $parte) {
+                if ($parte->tipo_parte_id == 2) {
+                    $domicilio_citado = $parte->domicilios->last();
+                    break;
+                }
+            }
+
+            // Actualizar la solicitud con ratificación
+            $fecha_ratificacion = now();
+            
+            // HARDCODED: fecha_vigencia para pruebas (45 días desde hoy)
+            $fecha_vigencia = Carbon::now()->addDays(45)->toDateString();
+            
+            // HARDCODED: user_id para pruebas
+            $user_id = 1;
+            
+            $solicitud->update([
+                "estatus_solicitud_id" => 2,
+                "user_id" => $user_id,
+                "ratificada" => true,
+                "fecha_ratificacion" => $fecha_ratificacion,
+                "fecha_vigencia" => $fecha_vigencia,
+                "inmediata" => false
+            ]);
+
+            // Obtener el siguiente consecutivo disponible para audiencias
+            $max_folio_audiencia = \App\Audiencia::where('anio', $anio)->max('folio');
+            $consecutivo_audiencia = ($max_folio_audiencia ?? 0) + 1;
+            
+            Log::info('CreateAudiencia: Generando folio de audiencia', [
+                'consecutivo_audiencia' => $consecutivo_audiencia,
+                'max_folio_anterior' => $max_folio_audiencia
+            ]);
+            
+            // HARDCODED: Valores para la audiencia
+            $fecha_audiencia = Carbon::now()->addDays(15)->toDateString(); // 15 días desde hoy
+            $hora_inicio = "10:00:00";
+            $hora_fin = "12:00:00";
+            $conciliador_id = 1; // ID de conciliador hardcodeado
+            $sala_id = 1; // ID de sala hardcodeada
+            $multiple = false;
+            $fecha_cita = null;
+
+            // Crear el registro de la audiencia
+            $audiencia = \App\Audiencia::create([
+                "expediente_id" => $expediente->id,
+                "multiple" => $multiple,
+                "fecha_audiencia" => $fecha_audiencia,
+                "fecha_limite_audiencia" => null,
+                "hora_inicio" => $hora_inicio,
+                "hora_fin" => $hora_fin,
+                "conciliador_id" => $conciliador_id,
+                "numero_audiencia" => 1,
+                "reprogramada" => false,
+                "anio" => $anio,
+                "folio" => $consecutivo_audiencia,
+                "encontro_audiencia" => true,
+                "fecha_cita" => $fecha_cita
+            ]);
+            
+            Log::info('CreateAudiencia: Audiencia creada', ['audiencia_id' => $audiencia->id]);
+
+            // Crear relación conciliador-audiencia
+            \App\ConciliadorAudiencia::create([
+                "audiencia_id" => $audiencia->id,
+                "conciliador_id" => $conciliador_id,
+                "solicitante" => true
+            ]);
+
+            // Crear relación sala-audiencia
+            \App\SalaAudiencia::create([
+                "audiencia_id" => $audiencia->id,
+                "sala_id" => $sala_id,
+                "solicitante" => true
+            ]);
+
+            // Guardar todas las Partes en la audiencia
+            foreach ($solicitud->partes as $parte) {
+                \App\AudienciaParte::create([
+                    "audiencia_id" => $audiencia->id,
+                    "parte_id" => $parte->id
+                ]);
+            }
+
+            DB::commit();
+            
+            Log::info('CreateAudiencia: Proceso completado exitosamente', [
+                'audiencia_id' => $audiencia->id,
+                'solicitud_id' => $solicitud->id
+            ]);
+            
+            return $audiencia;
+            
+        } catch (\Exception $e) {
+            DB::rollback();
+            Log::error('Error en createAudiencia: ' . $e->getMessage(), [
+                'solicitud_id' => $solicitud->id,
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e; // Re-lanzar para que sea capturado en el try-catch de create()
         }
     }
 }
