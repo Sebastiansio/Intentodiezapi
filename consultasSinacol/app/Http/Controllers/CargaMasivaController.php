@@ -70,10 +70,52 @@ class CargaMasivaController extends Controller
             // Pasamos el solicitante y la info común al importador
             Excel::import(new CitadoImport($solicitante, $common), $uploaded ?? $request->file('archivo_citados'));
 
-            return redirect()->back()->with('success', 'Archivo recibido. Las solicitudes se están procesando en segundo plano.');
+            // Obtener estadísticas básicas del archivo
+            $filePath = $uploaded->getRealPath();
+            $fileSize = round(filesize($filePath) / 1024, 2); // KB
+            $fileName = $uploaded->getClientOriginalName();
+            
+            // Contar filas del CSV/Excel (aproximado)
+            $rowCount = 0;
+            if (strtolower($uploaded->getClientOriginalExtension()) === 'csv') {
+                $file = fopen($filePath, 'r');
+                while (fgets($file) !== false) {
+                    $rowCount++;
+                }
+                fclose($file);
+                $rowCount = max(0, $rowCount - 1); // Restar encabezado
+            }
+
+            \Log::info('CargaMasiva: Archivo procesado', [
+                'archivo' => $fileName,
+                'tamaño_kb' => $fileSize,
+                'filas_estimadas' => $rowCount,
+                'solicitante' => $solicitante['nombre'] ?? 'N/A',
+                'fecha_conflicto' => $common['fecha_conflicto']
+            ]);
+
+            return redirect()->back()->with([
+                'success' => 'Archivo procesado correctamente',
+                'archivo_info' => [
+                    'nombre' => $fileName,
+                    'tamaño' => $fileSize . ' KB',
+                    'filas' => $rowCount > 0 ? $rowCount : 'calculando...',
+                    'timestamp' => now()->format('d/m/Y H:i:s')
+                ]
+            ]);
 
         } catch (\Exception $e) {
-            return redirect()->back()->with('error', 'Ocurrió un error al procesar el archivo: ' . $e->getMessage());
+            \Log::error('CargaMasiva: Error en upload', [
+                'mensaje' => $e->getMessage(),
+                'linea' => $e->getLine(),
+                'archivo' => $e->getFile()
+            ]);
+            
+            return redirect()->back()->with([
+                'error' => 'Error al procesar el archivo',
+                'error_detalle' => $e->getMessage(),
+                'error_contexto' => 'Línea ' . $e->getLine() . ' en ' . basename($e->getFile())
+            ]);
         }
     }
 }

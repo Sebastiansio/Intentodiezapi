@@ -63,6 +63,14 @@ $testData = [
     'dias_aguinaldo' => '20',
     'prestaciones_adicionales' => 'NINGUNA OTRA PRESTACIÓN',
     'tipo_contacto' => 'TELEFONO',
+    // ⭐ CONCEPTOS DE PAGO - Agregar aquí los conceptos del CSV
+    'conceptos' => [
+        ['concepto_id' => 1, 'monto' => 15000.00, 'dias' => null, 'otro' => ''], // Salarios caídos
+        ['concepto_id' => 2, 'monto' => 8000.00, 'dias' => null, 'otro' => ''],  // Indemnización
+        ['concepto_id' => 3, 'monto' => 5000.00, 'dias' => null, 'otro' => ''],  // Prima de antigüedad
+        ['concepto_id' => 4, 'monto' => 2000.00, 'dias' => null, 'otro' => ''],  // Aguinaldo
+        ['concepto_id' => 13, 'monto' => 3000.00, 'dias' => null, 'otro' => ''], // Deducciones (se resta)
+    ],
     'solicitante' => [
         'tipo_persona_id' => '2',
         'nombre_comercial' => 'Empresa agme',

@@ -37,6 +37,12 @@ class CitadoImport implements ToCollection, WithHeadingRow
             // Sanitizar/normalizar valores individuales
             $cleanedData = $this->sanitizeRow($cleanedData);
 
+            // ⭐ PARSEAR CONCEPTOS DE PAGO desde columnas concepto_1, concepto_2, etc.
+            $conceptos = $this->parseConceptos($cleanedData);
+            if (!empty($conceptos)) {
+                $cleanedData['conceptos'] = $conceptos;
+            }
+
             // Adjuntamos los datos comunes a nivel superior (para compatibilidad
             // con los servicios que esperan keys como 'fecha_conflicto' en top-level)
             // y mantenemos 'solicitante' anidado bajo su propia key.
@@ -78,14 +84,16 @@ class CitadoImport implements ToCollection, WithHeadingRow
             }
 
             // Numeric-ish fields
-            if (in_array($k, ['telefono','cp','num_ext','num_int','nss','salario']) || preg_match('/^(\d+)$/', (string)$v)) {
+            if (in_array($k, ['telefono','cp','num_ext','num_int','nss','salario']) 
+                || preg_match('/^concepto_\d+$/i', $k)  // Detectar columnas de conceptos
+                || preg_match('/^(\d+)$/', (string)$v)) {
                 // Remove trailing .0 from floats exported by Excel
                 $val = (string)$v;
                 $val = preg_replace('/\.0+$/', '', $val);
                 // If it's numeric, cast accordingly
                 if (is_numeric($val)) {
-                    // salario puede ser decimal
-                    if ($k === 'salario' || strpos($k, 'monto') !== false) {
+                    // salario, conceptos y montos pueden ser decimal
+                    if ($k === 'salario' || strpos($k, 'monto') !== false || preg_match('/^concepto_\d+$/i', $k)) {
                         $out[$k] = (float)$val;
                     } else {
                         // keep as string to preserve leading zeros in CP/telefono
@@ -164,5 +172,81 @@ class CitadoImport implements ToCollection, WithHeadingRow
             $cleaned[$newKey] = $value;
         }
         return $cleaned;
+    }
+
+    /**
+     * Parsea las columnas de conceptos de pago (concepto_1, concepto_2, etc.)
+     * y las convierte en un array de conceptos.
+     * 
+     * @param array $row Fila con claves ya limpiadas
+     * @return array Array de conceptos en formato ['concepto_id' => X, 'monto' => Y]
+     */
+    private function parseConceptos(array $row): array
+    {
+        $conceptos = [];
+        
+        // Buscar todas las columnas que empiecen con "concepto_"
+        foreach ($row as $key => $value) {
+            // Detectar columnas concepto_1, concepto_2, concepto_13, etc.
+            if (preg_match('/^concepto_(\d+)$/i', $key, $matches)) {
+                $conceptoId = (int)$matches[1];
+                $monto = $this->parseMontoValue($value);
+                
+                // Solo agregar si el monto es mayor a 0
+                if ($monto > 0) {
+                    $conceptos[] = [
+                        'concepto_id' => $conceptoId,
+                        'monto' => $monto,
+                        'dias' => null,
+                        'otro' => ''
+                    ];
+                    
+                    Log::debug('CitadoImport: Concepto detectado', [
+                        'columna' => $key,
+                        'concepto_id' => $conceptoId,
+                        'monto' => $monto
+                    ]);
+                }
+            }
+        }
+        
+        if (!empty($conceptos)) {
+            Log::info('CitadoImport: Conceptos parseados', [
+                'total_conceptos' => count($conceptos),
+                'conceptos' => $conceptos
+            ]);
+        }
+        
+        return $conceptos;
+    }
+
+    /**
+     * Convierte un valor de monto a float, manejando diferentes formatos.
+     * Ej: "1,500.00", "1500", "$1,500", etc.
+     * 
+     * @param mixed $value
+     * @return float
+     */
+    private function parseMontoValue($value): float
+    {
+        if ($value === null || $value === '') {
+            return 0.0;
+        }
+        
+        // Convertir a string y limpiar
+        $str = (string)$value;
+        
+        // Remover símbolos de moneda, espacios, paréntesis
+        $str = preg_replace('/[$€£¥\s\(\)]/u', '', $str);
+        
+        // Remover comas (separadores de miles)
+        $str = str_replace(',', '', $str);
+        
+        // Intentar convertir a float
+        if (is_numeric($str)) {
+            return (float)$str;
+        }
+        
+        return 0.0;
     }
 }
