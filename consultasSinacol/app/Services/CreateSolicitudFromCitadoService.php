@@ -356,9 +356,9 @@ class CreateSolicitudFromCitadoService
     private function getDatosFechasAudiencia()
     {
         // Por defecto: audiencia para hoy a las 10:00
-        $fecha_audiencia = Carbon::now()->format('Y-m-d');
+        $fecha_audiencia = Carbon::now(); // Retornar objeto Carbon, no string
         $hora_inicio = '10:00:00';
-        $hora_fin = '12:00:00';
+        $hora_fin = '11:00:00'; // Duración de 1 hora (era 12:00:00)
         $fecha_resolucion = Carbon::now()->addDays(1)->format('Y-m-d H:i:00');
         
         return [$fecha_audiencia, $hora_inicio, $hora_fin, $fecha_resolucion];
@@ -369,12 +369,22 @@ class CreateSolicitudFromCitadoService
      * 
      * @param Solicitud $solicitud
      * @param Audiencia $audiencia
+     * @param array $datosRepresentante Datos del representante legal desde el formulario
      * @return Parte|null
      */
-    private function crearRepresentanteLegal(Solicitud $solicitud, Audiencia $audiencia): ?Parte
+    private function crearRepresentanteLegal(Solicitud $solicitud, Audiencia $audiencia, array $datosRepresentante = []): ?Parte
     {
         try {
-            Log::info('CrearRepresentante: Iniciando', ['solicitud_id' => $solicitud->id]);
+            Log::info('CrearRepresentante: Iniciando', [
+                'solicitud_id' => $solicitud->id,
+                'tiene_datos' => !empty($datosRepresentante)
+            ]);
+            
+            // Si no hay datos de representante, no crear
+            if (empty($datosRepresentante)) {
+                Log::info('CrearRepresentante: No se proporcionaron datos de representante');
+                return null;
+            }
             
             // Buscar la parte representada (solicitante)
             $parteRepresentada = null;
@@ -390,25 +400,58 @@ class CreateSolicitudFromCitadoService
                 return null;
             }
             
-            // Datos del representante (puedes modificar estos valores según tus necesidades)
-            // Por ahora usamos datos genéricos, idealmente vendrían de los datos del citado
+            // Crear representante con los datos del formulario
             $representante = Parte::create([
                 'solicitud_id' => $solicitud->id,
                 'tipo_parte_id' => 3, // 3 = Representante
                 'tipo_persona_id' => 1, // 1 = Física
-                'rfc' => '',
-                'curp' => '', // Se puede generar o dejar vacío
-                'nombre' => 'REPRESENTANTE',
-                'primer_apellido' => 'LEGAL',
-                'segundo_apellido' => '',
-                'fecha_nacimiento' => null,
-                'genero_id' => 1, // 1 = Masculino
+                'rfc' => $datosRepresentante['rfc'] ?? '',
+                'curp' => $datosRepresentante['curp'] ?? '',
+                'nombre' => strtoupper($datosRepresentante['nombre'] ?? 'REPRESENTANTE'),
+                'primer_apellido' => strtoupper($datosRepresentante['primer_apellido'] ?? 'LEGAL'),
+                'segundo_apellido' => strtoupper($datosRepresentante['segundo_apellido'] ?? ''),
+                'fecha_nacimiento' => $this->parseDate($datosRepresentante['fecha_nacimiento'] ?? null),
+                'genero_id' => $datosRepresentante['genero_id'] ?? 1,
                 'clasificacion_archivo_id' => null,
-                'detalle_instrumento' => null,
+                'detalle_instrumento' => 'Poder General para Pleitos y Cobranzas',
                 'feha_instrumento' => now()->format('Y-m-d'),
                 'parte_representada_id' => $parteRepresentada,
                 'representante' => true,
             ]);
+            
+            // Crear contacto del representante si se proporcionó
+            if (!empty($datosRepresentante['telefono']) || !empty($datosRepresentante['correo_electronico'])) {
+                try {
+                    // Buscar tipo de contacto por defecto (teléfono móvil)
+                    $tipoContacto = TipoContacto::where('nombre', 'Teléfono móvil')->first();
+                    
+                    if (!empty($datosRepresentante['telefono']) && $tipoContacto) {
+                        DB::table('contactos')->insert([
+                            'parte_id' => $representante->id,
+                            'tipo_contacto_id' => $tipoContacto->id,
+                            'contacto' => $datosRepresentante['telefono'],
+                            'created_at' => now(),
+                            'updated_at' => now()
+                        ]);
+                    }
+                    
+                    // Email
+                    if (!empty($datosRepresentante['correo_electronico'])) {
+                        $tipoEmail = TipoContacto::where('nombre', 'Correo electrónico')->first();
+                        if ($tipoEmail) {
+                            DB::table('contactos')->insert([
+                                'parte_id' => $representante->id,
+                                'tipo_contacto_id' => $tipoEmail->id,
+                                'contacto' => $datosRepresentante['correo_electronico'],
+                                'created_at' => now(),
+                                'updated_at' => now()
+                            ]);
+                        }
+                    }
+                } catch (\Exception $e) {
+                    Log::warning('CrearRepresentante: Error al crear contactos', ['error' => $e->getMessage()]);
+                }
+            }
             
             // Crear compareciente para el representante
             Compareciente::create([
@@ -417,13 +460,18 @@ class CreateSolicitudFromCitadoService
                 'presentado' => true
             ]);
             
-            Log::info('CrearRepresentante: Representante creado', ['representante_id' => $representante->id]);
+            Log::info('CrearRepresentante: Representante creado exitosamente', [
+                'representante_id' => $representante->id,
+                'nombre' => $representante->nombre . ' ' . $representante->primer_apellido,
+                'curp' => $representante->curp
+            ]);
             
             return $representante;
             
         } catch (\Exception $e) {
             Log::error('CrearRepresentante: Error', [
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
                 'solicitud_id' => $solicitud->id
             ]);
             return null;
@@ -811,8 +859,12 @@ class CreateSolicitudFromCitadoService
                 $sala_id = $sala->id;
             }
 
-            // Obtener conciliador (por ahora hardcodeado, puedes implementar lógica más compleja)
-            $conciliador_id = 248; // HARDCODED: implementar lógica de obtenerDatosConciliador() si es necesario
+            // Obtener conciliador desde citadoData o usar el hardcodeado como fallback
+            $conciliador_id = isset($citadoData['conciliador_id']) && !empty($citadoData['conciliador_id']) 
+                ? (int)$citadoData['conciliador_id'] 
+                : 248; // Fallback por defecto
+            
+            Log::info('CreateAudiencia: Conciliador asignado', ['conciliador_id' => $conciliador_id]);
 
             // === PASO 1: CREAR EXPEDIENTE CON LÓGICA ROBUSTA ===
             // Validar que la solicitud no tenga expediente ya (similar a ConveniosMasivos)
@@ -983,33 +1035,53 @@ class CreateSolicitudFromCitadoService
             // Sistema robusto para generar folio único de audiencia
             $audiencia = null;
             $intentos_audiencia = 0;
-            $max_intentos_audiencia = 20;
+            $max_intentos_audiencia = 200; // Aumentado de 20 a 200 intentos
             $folio_audiencia = $folio_audiencia_inicial;
+            
+            // Fecha base que puede cambiar si hay muchos intentos fallidos
+            $fecha_audiencia_actual = clone $fecha_audiencia_base;
             
             while ($audiencia === null && $intentos_audiencia < $max_intentos_audiencia) {
                 try {
+                    // Cambiar de día cada 50 intentos
+                    if ($intentos_audiencia > 0 && $intentos_audiencia % 50 == 0) {
+                        $fecha_audiencia_actual->addDay();
+                        Log::info('CreateAudiencia: Cambiando a siguiente día', [
+                            'nueva_fecha' => $fecha_audiencia_actual->format('Y-m-d'),
+                            'intento' => $intentos_audiencia
+                        ]);
+                    }
+                    
                     // Variar la hora de inicio en cada intento para evitar restricción UNIQUE
-                    $hora_base = 10; // Hora inicial: 10:00
-                    $minutos_offset = $intentos_audiencia * 15;
+                    $hora_base = 8; // Hora inicial: 08:00
+                    $minutos_offset = ($intentos_audiencia % 50) * 15; // Reinicia cada día
                     $hora_inicio_audiencia = Carbon::createFromTime($hora_base, 0, 0)
                         ->addMinutes($minutos_offset)
                         ->format('H:i:s');
                     $hora_fin_audiencia = Carbon::createFromTime($hora_base, 0, 0)
-                        ->addMinutes($minutos_offset + 120)
+                        ->addMinutes($minutos_offset + 60) // Duración de 1 hora (era 120)
                         ->format('H:i:s');
+                    
+                    // Si la hora pasa de las 19:00, saltar al siguiente día
+                    if (Carbon::parse($hora_inicio_audiencia)->hour >= 19) {
+                        $intentos_audiencia++;
+                        continue; // Salta este intento
+                    }
                     
                     // Verificación previa: evitar violación de restricción UNIQUE
                     $audiencia_existe = \App\Audiencia::where('conciliador_id', $conciliador_id)
-                        ->where('fecha_audiencia', $fecha_audiencia_base)
+                        ->where('fecha_audiencia', $fecha_audiencia_actual->format('Y-m-d'))
                         ->where('hora_inicio', $hora_inicio_audiencia)
                         ->exists();
                     
                     if ($audiencia_existe) {
                         $intentos_audiencia++;
-                        Log::info('CreateAudiencia: Hora ya ocupada, probando siguiente slot', [
-                            'hora_ocupada' => $hora_inicio_audiencia,
-                            'intento' => $intentos_audiencia
-                        ]);
+                        if ($intentos_audiencia % 10 == 0) { // Log cada 10 intentos para no saturar
+                            Log::info('CreateAudiencia: Hora ya ocupada, probando siguiente slot', [
+                                'hora_ocupada' => $hora_inicio_audiencia,
+                                'intento' => $intentos_audiencia
+                            ]);
+                        }
                         continue;
                     }
                     
@@ -1038,7 +1110,7 @@ class CreateSolicitudFromCitadoService
                     $audiencia = \App\Audiencia::create([
                         'expediente_id' => $expediente->id,
                         'multiple' => false,
-                        'fecha_audiencia' => $fecha_audiencia_base,
+                        'fecha_audiencia' => $fecha_audiencia_actual->format('Y-m-d'),
                         'hora_inicio' => $hora_inicio_audiencia,
                         'hora_fin' => $hora_fin_audiencia,
                         'conciliador_id' => $conciliador_id,
@@ -1121,8 +1193,9 @@ class CreateSolicitudFromCitadoService
             // === PASO 5: PROCESO COMPLETO DE CONFIRMACIÓN ===
             Log::info('CreateAudiencia: Iniciando proceso de confirmación completo', ['audiencia_id' => $audiencia->id]);
             
-            // 5.1 Crear representante legal
-            $this->crearRepresentanteLegal($solicitud, $audiencia);
+            // 5.1 Crear representante legal (si se proporcionaron datos)
+            $datosRepresentante = $citadoData['representante'] ?? [];
+            $this->crearRepresentanteLegal($solicitud, $audiencia, $datosRepresentante);
             
             // 5.2 Crear manifestaciones (etapas de resolución)
             $this->crearManifestaciones($audiencia);

@@ -10,6 +10,7 @@ use App\GiroComercial;
 use App\ObjetoSolicitud;
 use App\Estado;
 use App\TipoVialidad;
+use App\Conciliador;
 
 
 class CargaMasivaController extends Controller
@@ -23,8 +24,21 @@ class CargaMasivaController extends Controller
         $objeto_solicitudes = ObjetoSolicitud::pluck('nombre','id')->toArray();
         $estados = Estado::all();
         $tipo_vialidades = TipoVialidad::all();
+        
+        // Obtener conciliadores activos
+        $conciliadores = Conciliador::select('id', 'persona_id')
+            ->with(['persona:id,nombre,primer_apellido,segundo_apellido'])
+            ->whereHas('persona')
+            ->get()
+            ->map(function($conciliador) {
+                $persona = $conciliador->persona;
+                return [
+                    'id' => $conciliador->id,
+                    'nombre_completo' => trim($persona->nombre . ' ' . $persona->primer_apellido . ' ' . $persona->segundo_apellido)
+                ];
+            });
 
-        return view('solicitante.carga_masiva', compact('tipo_solicitudes','giros_comerciales','objeto_solicitudes','estados','tipo_vialidades'));
+        return view('solicitante.carga_masiva', compact('tipo_solicitudes','giros_comerciales','objeto_solicitudes','estados','tipo_vialidades','conciliadores'));
     }
 
     public function handleUpload(Request $request)
@@ -41,7 +55,19 @@ class CargaMasivaController extends Controller
         try {
             // Recolectamos los datos del solicitante y campos comunes
             $solicitante = $request->input('solicitante', []);
-            $common = $request->only(['fecha_conflicto','tipo_solicitud_id','giro_comercial_id','objeto_solicitudes','virtual']);
+            $common = $request->only(['fecha_conflicto','tipo_solicitud_id','giro_comercial_id','objeto_solicitudes','virtual','conciliador_id']);
+
+            // Recolectar datos del representante legal si existen
+            $representante = null;
+            if ($request->has('tiene_representante') && $request->input('tiene_representante') == '1') {
+                $representante = $request->input('representante', []);
+                
+                \Log::info('CargaMasiva: Datos del representante legal detectados', [
+                    'nombre' => $representante['nombre'] ?? 'N/A',
+                    'primer_apellido' => $representante['primer_apellido'] ?? 'N/A',
+                    'curp' => $representante['curp'] ?? 'N/A'
+                ]);
+            }
 
             // Normalizar fecha_conflicto (aceptamos dd/mm/YYYY)
             try {
@@ -67,8 +93,8 @@ class CargaMasivaController extends Controller
                 }
             }
 
-            // Pasamos el solicitante y la info común al importador
-            Excel::import(new CitadoImport($solicitante, $common), $uploaded ?? $request->file('archivo_citados'));
+            // Pasamos el solicitante, representante y la info común al importador
+            Excel::import(new CitadoImport($solicitante, $common, $representante), $uploaded ?? $request->file('archivo_citados'));
 
             // Obtener estadísticas básicas del archivo
             $filePath = $uploaded->getRealPath();
@@ -91,8 +117,12 @@ class CargaMasivaController extends Controller
                 'tamaño_kb' => $fileSize,
                 'filas_estimadas' => $rowCount,
                 'solicitante' => $solicitante['nombre'] ?? 'N/A',
-                'fecha_conflicto' => $common['fecha_conflicto']
+                'fecha_conflicto' => $common['fecha_conflicto'],
+                'tiene_representante' => $representante ? 'Sí' : 'No'
             ]);
+
+            // Guardar timestamp de inicio de procesamiento en sesión
+            session(['carga_masiva_timestamp' => now()->format('Y-m-d H:i:s')]);
 
             return redirect()->back()->with([
                 'success' => 'Archivo procesado correctamente',

@@ -14,15 +14,17 @@ class CitadoImport implements ToCollection, WithHeadingRow
 {
     protected $solicitante = [];
     protected $common = [];
+    protected $representante = null;
 
     /**
-     * Accept solicitante and common request data so each row can be processed
-     * in the context of the common applicant data.
+     * Accept solicitante, common request data and representante (optional)
+     * so each row can be processed in the context of the common applicant data.
      */
-    public function __construct(array $solicitante = [], array $common = [])
+    public function __construct(array $solicitante = [], array $common = [], $representante = null)
     {
         $this->solicitante = $solicitante;
         $this->common = $common;
+        $this->representante = $representante;
     }
     /**
     * @param Collection $rows
@@ -48,6 +50,14 @@ class CitadoImport implements ToCollection, WithHeadingRow
             // y mantenemos 'solicitante' anidado bajo su propia key.
             $payload = array_merge($this->common, $cleanedData);
             $payload['solicitante'] = $this->solicitante;
+            
+            // Agregar datos del representante si existen
+            if ($this->representante !== null && !empty($this->representante)) {
+                $payload['representante'] = $this->representante;
+                Log::info('CitadoImport: Representante agregado al payload', [
+                    'representante_nombre' => $this->representante['nombre'] ?? 'N/A'
+                ]);
+            }
 
             // Despachamos el job con los datos ya limpios y el solicitante
             try {

@@ -336,6 +336,29 @@
                             </div>
                         </div>
                     </div>
+                    
+                    <!-- Selector de Conciliador -->
+                    <div class="grid grid-cols-1 gap-6">
+                        <div class="space-y-2">
+                            <label for="conciliador_id" class="flex items-center text-sm font-semibold text-gray-700">
+                                <i class="fas fa-user-check text-sinacol-primary mr-2"></i>
+                                Conciliador Asignado <span class="text-red-500 ml-1">*</span>
+                            </label>
+                            <select name="conciliador_id" id="conciliador_id" required
+                                    class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none input-focus transition-all duration-200 text-gray-700 bg-white">
+                                <option value="">-- Seleccione un conciliador --</option>
+                                @foreach($conciliadores ?? [] as $conciliador)
+                                    <option value="{{ $conciliador['id'] }}" {{ old('conciliador_id') == $conciliador['id'] ? 'selected' : '' }}>
+                                        {{ $conciliador['nombre_completo'] }}
+                                    </option>
+                                @endforeach
+                            </select>
+                            <p class="text-xs text-gray-500 mt-1">
+                                <i class="fas fa-info-circle mr-1"></i>
+                                Este conciliador será asignado a todas las audiencias generadas
+                            </p>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -565,7 +588,139 @@
                 </div>
             </div>
 
-            <!-- Sección 3: Archivo de Citados -->
+            <!-- Sección 3: Datos del Representante Legal (Opcional) -->
+            <div class="bg-white rounded-2xl overflow-hidden card-shadow-lg border border-gray-100">
+                <div class="gradient-header px-6 py-4">
+                    <div class="flex items-center space-x-3">
+                        <div class="bg-white/20 backdrop-blur-sm rounded-lg p-2">
+                            <i class="fas fa-user-tie text-white text-lg"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-xl font-semibold text-white">Representante Legal del Solicitante</h2>
+                            <p class="text-white/70 text-sm">Opcional: Complete si el solicitante actúa mediante representante</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="p-6 space-y-6">
+                    <!-- Checkbox para habilitar representante -->
+                    <div class="flex items-center space-x-3 bg-blue-50 rounded-xl p-4">
+                        <input type="checkbox" id="tiene_representante" name="tiene_representante" value="1"
+                               class="w-5 h-5 text-sinacol-primary focus:ring-sinacol-primary rounded">
+                        <label for="tiene_representante" class="text-sm font-medium text-gray-700 cursor-pointer">
+                            <i class="fas fa-info-circle text-blue-500 mr-1"></i>
+                            El solicitante será representado por un apoderado legal
+                        </label>
+                    </div>
+
+                    <div id="representante_fields" style="display: none;">
+                        <!-- Nombre completo -->
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    <i class="fas fa-user text-sinacol-primary mr-1"></i>Nombre(s) <span class="text-red-500">*</span>
+                                </label>
+                                <input type="text" name="representante[nombre]" id="representante_nombre"
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none input-focus transition-all duration-200 text-gray-700"
+                                       placeholder="Nombre del representante">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    <i class="fas fa-user text-sinacol-primary mr-1"></i>Primer Apellido <span class="text-red-500">*</span>
+                                </label>
+                                <input type="text" name="representante[primer_apellido]" id="representante_primer_apellido"
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none input-focus transition-all duration-200 text-gray-700"
+                                       placeholder="Apellido paterno">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    <i class="fas fa-user text-sinacol-primary mr-1"></i>Segundo Apellido
+                                </label>
+                                <input type="text" name="representante[segundo_apellido]" id="representante_segundo_apellido"
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none input-focus transition-all duration-200 text-gray-700"
+                                       placeholder="Apellido materno">
+                            </div>
+                        </div>
+
+                        <!-- CURP y RFC -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    <i class="fas fa-id-card text-sinacol-primary mr-1"></i>CURP <span class="text-red-500">*</span>
+                                </label>
+                                <input type="text" name="representante[curp]" id="representante_curp"
+                                       maxlength="18" pattern="[A-Z0-9]{18}"
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none input-focus transition-all duration-200 text-gray-700 uppercase"
+                                       placeholder="18 caracteres">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    <i class="fas fa-id-card text-sinacol-primary mr-1"></i>RFC
+                                </label>
+                                <input type="text" name="representante[rfc]" id="representante_rfc"
+                                       maxlength="13" pattern="[A-Z0-9]{12,13}"
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none input-focus transition-all duration-200 text-gray-700 uppercase"
+                                       placeholder="12 o 13 caracteres">
+                            </div>
+                        </div>
+
+                        <!-- Género y Fecha de Nacimiento -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    <i class="fas fa-venus-mars text-sinacol-primary mr-1"></i>Género <span class="text-red-500">*</span>
+                                </label>
+                                <select name="representante[genero_id]" id="representante_genero_id"
+                                        class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none input-focus transition-all duration-200 text-gray-700">
+                                    <option value="">Seleccione...</option>
+                                    <option value="1">Masculino</option>
+                                    <option value="2">Femenino</option>
+                                    <option value="3">Otro</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    <i class="fas fa-calendar text-sinacol-primary mr-1"></i>Fecha de Nacimiento
+                                </label>
+                                <input type="date" name="representante[fecha_nacimiento]" id="representante_fecha_nacimiento"
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none input-focus transition-all duration-200 text-gray-700">
+                            </div>
+                        </div>
+
+                        <!-- Contacto -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    <i class="fas fa-phone text-sinacol-primary mr-1"></i>Teléfono
+                                </label>
+                                <input type="tel" name="representante[telefono]" id="representante_telefono"
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none input-focus transition-all duration-200 text-gray-700"
+                                       placeholder="10 dígitos">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-semibold text-gray-700 mb-2">
+                                    <i class="fas fa-envelope text-sinacol-primary mr-1"></i>Correo Electrónico
+                                </label>
+                                <input type="email" name="representante[correo_electronico]" id="representante_correo"
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none input-focus transition-all duration-200 text-gray-700"
+                                       placeholder="ejemplo@correo.com">
+                            </div>
+                        </div>
+
+                        <!-- Info adicional -->
+                        <div class="bg-amber-50 border-l-4 border-amber-400 rounded-r-xl p-4">
+                            <div class="flex">
+                                <i class="fas fa-lightbulb text-amber-500 mr-3 mt-0.5"></i>
+                                <div class="text-sm text-amber-800">
+                                    <p class="font-semibold mb-1">Nota importante:</p>
+                                    <p>El representante legal comparecerá en nombre del solicitante en todas las audiencias. Se generará automáticamente como compareciente en el sistema.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sección 4: Archivo de Citados -->
             <div class="bg-white rounded-2xl overflow-hidden card-shadow-lg border border-gray-100">
                 <div class="gradient-header px-6 py-4">
                     <div class="flex items-center space-x-3">
@@ -830,8 +985,11 @@
             function startProgressMonitoring() {
                 checksRealizados = 0;
                 
+                console.log('🚀 Iniciando monitoreo de progreso...');
+                
                 monitoringInterval = setInterval(async () => {
                     checksRealizados++;
+                    console.log(`📡 Check #${checksRealizados} - Consultando /api/carga-masiva/status...`);
                     
                     try {
                         const response = await fetch('/api/carga-masiva/status', {
@@ -842,20 +1000,26 @@
                             }
                         });
                         
+                        console.log(`📥 Respuesta recibida:`, response.status, response.statusText);
+                        
                         if (response.ok) {
                             const data = await response.json();
+                            console.log('✅ Datos recibidos:', data);
                             updateProgressUI(data);
                             
                             // Si está completado o llegamos al máximo de checks
                             if (data.resumen.completado || checksRealizados >= maxChecks) {
+                                console.log('🏁 Proceso completado o timeout alcanzado');
                                 stopProgressMonitoring();
                                 if (data.resumen.completado) {
                                     showCompletionMessage(data);
                                 }
                             }
+                        } else {
+                            console.error('❌ Error en respuesta:', response.status);
                         }
                     } catch (error) {
-                        console.error('Error al obtener estado:', error);
+                        console.error('❌ Error al obtener estado:', error);
                     }
                 }, 5000); // Cada 5 segundos
             }
@@ -884,6 +1048,16 @@
                 document.getElementById('stat-expedientes').textContent = resumen.expedientes_creados;
                 document.getElementById('stat-audiencias').textContent = resumen.audiencias_creadas;
                 document.getElementById('stat-conceptos').textContent = resumen.conceptos_creados;
+                
+                // Mostrar jobs pendientes si existen
+                if (resumen.jobs_pendientes > 0) {
+                    const statusMessage = document.querySelector('#progress-container .flex.items-center.justify-between span');
+                    if (statusMessage) {
+                        statusMessage.textContent = `Procesando convenios... (${resumen.jobs_pendientes} pendientes)`;
+                    }
+                }
+                
+                console.log('📊 Progreso actualizado:', resumen);
             }
 
             function showCompletionMessage(data) {
@@ -934,14 +1108,40 @@
             const curpInput = document.getElementById('solicitante_curp');
             const rfcFisicaInput = document.getElementById('solicitante_rfc_fisica');
             const rfcMoralInput = document.getElementById('solicitante_rfc_moral');
+            const representanteCurp = document.getElementById('representante_curp');
+            const representanteRfc = document.getElementById('representante_rfc');
             
-            [curpInput, rfcFisicaInput, rfcMoralInput].forEach(input => {
+            [curpInput, rfcFisicaInput, rfcMoralInput, representanteCurp, representanteRfc].forEach(input => {
                 if (input) {
                     input.addEventListener('input', function(e) {
                         this.value = this.value.toUpperCase();
                     });
                 }
             });
+
+            // ==================== TOGGLE REPRESENTANTE LEGAL ====================
+            const tieneRepresentanteCheckbox = document.getElementById('tiene_representante');
+            const representanteFields = document.getElementById('representante_fields');
+            
+            if (tieneRepresentanteCheckbox && representanteFields) {
+                tieneRepresentanteCheckbox.addEventListener('change', function() {
+                    if (this.checked) {
+                        representanteFields.style.display = 'block';
+                        // Hacer campos requeridos
+                        document.getElementById('representante_nombre').required = true;
+                        document.getElementById('representante_primer_apellido').required = true;
+                        document.getElementById('representante_curp').required = true;
+                        document.getElementById('representante_genero_id').required = true;
+                    } else {
+                        representanteFields.style.display = 'none';
+                        // Quitar requerido
+                        document.getElementById('representante_nombre').required = false;
+                        document.getElementById('representante_primer_apellido').required = false;
+                        document.getElementById('representante_curp').required = false;
+                        document.getElementById('representante_genero_id').required = false;
+                    }
+                });
+            }
         });
     </script>
 

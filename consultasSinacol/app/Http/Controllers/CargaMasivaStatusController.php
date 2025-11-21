@@ -15,16 +15,36 @@ class CargaMasivaStatusController extends Controller
     public function getStatus(Request $request)
     {
         try {
-            $minutosAtras = 5; // Buscar registros de los últimos 5 minutos
-            $fechaLimite = Carbon::now()->subMinutes($minutosAtras);
+            // Intentar obtener el timestamp de inicio de la sesión
+            $timestampInicio = session('carga_masiva_timestamp');
             
-            // Obtener solicitudes creadas recientemente
+            if ($timestampInicio) {
+                $fechaLimite = Carbon::parse($timestampInicio);
+                Log::info('CargaMasivaStatus: Usando timestamp de sesión', [
+                    'timestamp_inicio' => $timestampInicio
+                ]);
+            } else {
+                // Fallback: buscar en las últimas 24 horas para mostrar datos de cargas previas
+                $fechaLimite = Carbon::now()->subDay();
+                Log::info('CargaMasivaStatus: No hay timestamp en sesión, usando fallback 24 horas');
+            }
+            
+            Log::info('CargaMasivaStatus: Consultando estado', [
+                'fecha_limite' => $fechaLimite->format('Y-m-d H:i:s')
+            ]);
+            
+            // Obtener solicitudes creadas desde el timestamp
             $solicitudesRecientes = DB::table('solicitudes')
                 ->where('created_at', '>=', $fechaLimite)
                 ->orderBy('created_at', 'desc')
                 ->get(['id', 'folio', 'anio', 'created_at']);
             
             $totalSolicitudes = $solicitudesRecientes->count();
+            
+            Log::info('CargaMasivaStatus: Solicitudes encontradas', [
+                'total' => $totalSolicitudes,
+                'ids' => $solicitudesRecientes->take(10)->pluck('id')->toArray()
+            ]);
             
             // Contar expedientes y audiencias creados
             $expedientesCreados = 0;
@@ -68,8 +88,26 @@ class CargaMasivaStatusController extends Controller
                 }
             }
             
+            // Verificar jobs pendientes en la cola
+            $jobsPendientes = 0;
+            try {
+                $jobsPendientes = DB::table('jobs')->count();
+            } catch (\Exception $e) {
+                // La tabla jobs puede no existir si no se usa base de datos como driver de cola
+                Log::warning('No se pudo contar jobs pendientes', ['error' => $e->getMessage()]);
+            }
+            
             // Calcular progreso estimado
             $progreso = $totalSolicitudes > 0 ? round(($expedientesCreados / $totalSolicitudes) * 100) : 0;
+            
+            Log::info('CargaMasivaStatus: Resultado', [
+                'solicitudes' => $totalSolicitudes,
+                'expedientes' => $expedientesCreados,
+                'audiencias' => $audienciasCreadas,
+                'conceptos' => $conceptosCreados,
+                'progreso' => $progreso,
+                'jobs_pendientes' => $jobsPendientes
+            ]);
             
             return response()->json([
                 'success' => true,
@@ -81,7 +119,8 @@ class CargaMasivaStatusController extends Controller
                     'conceptos_creados' => $conceptosCreados,
                     'errores' => $solicitudesConError,
                     'progreso_porcentaje' => $progreso,
-                    'completado' => $progreso >= 100
+                    'completado' => $progreso >= 100 && $jobsPendientes == 0,
+                    'jobs_pendientes' => $jobsPendientes
                 ],
                 'ultimas_solicitudes' => $solicitudesRecientes->take(5)->map(function($sol) {
                     return [
