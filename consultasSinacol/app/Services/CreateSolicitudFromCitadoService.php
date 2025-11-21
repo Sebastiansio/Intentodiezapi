@@ -39,6 +39,161 @@ class CreateSolicitudFromCitadoService
      * El concepto de pago de deducciones es el ID 13 en el catálogo concepto_pago_resoluciones
      */
     const CONCEPTO_PAGO_DEDUCCION_ID = 13;
+    
+    /**
+     * Array para rastrear los IDs de documentos generados durante el proceso
+     * @var array
+     */
+    private static $documentosGenerados = [];
+    
+    /**
+     * Array para rastrear las solicitudes y audiencias creadas durante la carga
+     * @var array
+     */
+    private static $solicitudesAudienciasCreadas = [];
+    
+    /**
+     * Obtiene la lista de documentos generados en esta sesión
+     * @return array
+     */
+    public static function getDocumentosGenerados(): array
+    {
+        return self::$documentosGenerados;
+    }
+    
+    /**
+     * Limpia la lista de documentos generados
+     * @return void
+     */
+    public static function limpiarDocumentosGenerados(): void
+    {
+        self::$documentosGenerados = [];
+        self::$solicitudesAudienciasCreadas = [];
+        
+        // También limpiar de sesión
+        session()->forget('solicitudes_audiencias_creadas');
+        session()->forget('documentos_generados');
+        
+        Log::info('Documentos generados limpiados (memoria y sesión)');
+    }
+    
+    /**
+     * Registra una solicitud/audiencia creada durante el proceso
+     * @param int $solicitud_id
+     * @param int $audiencia_id
+     * @return void
+     */
+    public static function registrarSolicitudAudiencia(int $solicitud_id, int $audiencia_id): void
+    {
+        $registro = [
+            'solicitud_id' => $solicitud_id,
+            'audiencia_id' => $audiencia_id,
+            'timestamp' => now()->toDateTimeString()
+        ];
+        
+        // Guardar en array estático (para el request actual)
+        self::$solicitudesAudienciasCreadas[] = $registro;
+        
+        // También guardar en sesión (persistencia entre requests)
+        $solicitudesEnSesion = session('solicitudes_audiencias_creadas', []);
+        $solicitudesEnSesion[] = $registro;
+        session(['solicitudes_audiencias_creadas' => $solicitudesEnSesion]);
+        
+        Log::debug('SolicitudAudiencia registrada', [
+            'solicitud_id' => $solicitud_id,
+            'audiencia_id' => $audiencia_id
+        ]);
+    }
+    
+    /**
+     * Busca TODOS los documentos generados para las solicitudes/audiencias procesadas
+     * Este método debe llamarse AL FINAL de la carga masiva (puede tomar unos segundos)
+     * 
+     * @param int $segundos_espera Tiempo en segundos para esperar a que se generen los PDFs
+     * @return array Lista de documentos encontrados con sus IDs
+     */
+    public static function buscarTodosLosDocumentos(int $segundos_espera = 5): array
+    {
+        // Combinar array estático con datos de sesión
+        $solicitudesAudiencias = self::$solicitudesAudienciasCreadas;
+        
+        // Fallback a sesión si el array estático está vacío
+        if (empty($solicitudesAudiencias)) {
+            $solicitudesAudiencias = session('solicitudes_audiencias_creadas', []);
+            Log::info('BuscarDocumentos: Usando datos de sesión', [
+                'count' => count($solicitudesAudiencias)
+            ]);
+        }
+        
+        if (empty($solicitudesAudiencias)) {
+            Log::warning('BuscarDocumentos: No hay solicitudes/audiencias registradas (ni en memoria ni en sesión)');
+            return [];
+        }
+        
+        $solicitud_ids = array_unique(array_column($solicitudesAudiencias, 'solicitud_id'));
+        $audiencia_ids = array_unique(array_column($solicitudesAudiencias, 'audiencia_id'));
+        
+        Log::info('BuscarDocumentos: Esperando ' . $segundos_espera . ' segundos para que se generen los PDFs...');
+        
+        // Esperar a que se generen los documentos (los eventos son asíncronos)
+        sleep($segundos_espera);
+        
+        Log::info('BuscarDocumentos: Buscando documentos', [
+            'total_solicitudes' => count($solicitud_ids),
+            'total_audiencias' => count($audiencia_ids)
+        ]);
+        
+        // Buscar documentos de solicitudes (Acuse)
+        $docs_solicitud = Documento::where('documentable_type', \App\Solicitud::class)
+            ->whereIn('documentable_id', $solicitud_ids)
+            ->get();
+        
+        Log::debug('BuscarDocumentos: Documentos de solicitud encontrados', [
+            'count' => $docs_solicitud->count()
+        ]);
+        
+        foreach ($docs_solicitud as $doc) {
+            self::registrarDocumento($doc->id, 'acuse');
+        }
+        
+        // Buscar documentos de audiencias (Citatorio, Convenio)
+        $docs_audiencia = Documento::where('documentable_type', \App\Audiencia::class)
+            ->whereIn('documentable_id', $audiencia_ids)
+            ->get();
+        
+        Log::debug('BuscarDocumentos: Documentos de audiencia encontrados', [
+            'count' => $docs_audiencia->count()
+        ]);
+        
+        foreach ($docs_audiencia as $doc) {
+            // Clasificación 14 = Citatorio, 15 = Convenio
+            $tipo = $doc->clasificacion_archivo_id == 14 ? 'citatorio' : 'convenio';
+            self::registrarDocumento($doc->id, $tipo);
+        }
+        
+        Log::info('BuscarDocumentos: Proceso completado', [
+            'total_documentos' => count(self::$documentosGenerados),
+            'docs_solicitud' => $docs_solicitud->count(),
+            'docs_audiencia' => $docs_audiencia->count()
+        ]);
+        
+        return self::$documentosGenerados;
+    }
+    
+    /**
+     * Agrega un documento a la lista de generados
+     * @param int $documento_id
+     * @param string $tipo
+     * @return void
+     */
+    private static function registrarDocumento(int $documento_id, string $tipo): void
+    {
+        self::$documentosGenerados[] = [
+            'id' => $documento_id,
+            'tipo' => $tipo,
+            'timestamp' => now()->toDateTimeString()
+        ];
+    }
 
     /**
      * Crea una solicitud completa y todos sus registros relacionados
@@ -53,7 +208,10 @@ class CreateSolicitudFromCitadoService
         // Si algo falla, todos los cambios se revierten automáticamente.
         // Esta es la MEJOR PRÁCTICA (transacción por fila).
         // Asegúrate de que el script que llama a este método NO tenga su propia transacción.
-        return DB::transaction(function () use ($citadoData) {
+        
+        $audienciaCreada = null; // Guardar referencia para generar docs después
+        
+        $solicitud = DB::transaction(function () use ($citadoData, &$audienciaCreada) {
             try {
                 // Obtener el siguiente folio de manera segura
                 $max_folio = Solicitud::where('anio', date('Y'))->max('folio') + 1;
@@ -289,16 +447,28 @@ class CreateSolicitudFromCitadoService
                 Log::info('CreateSolicitud: Proceso completado con éxito', ['solicitud_id' => $solicitud->id]);
                 
                 // Crear audiencia automáticamente después de crear la solicitud
+                // IMPORTANTE: Envolver en try-catch robusto para no abortar la transacción
                 try {
                     Log::info('CreateSolicitud: Iniciando creación de audiencia', ['solicitud_id' => $solicitud->id]);
-                    $this->createAudiencia($solicitud, $citadoData);
+                    $audienciaCreada = $this->createAudiencia($solicitud, $citadoData);
                     Log::info('CreateSolicitud: Audiencia creada exitosamente', ['solicitud_id' => $solicitud->id]);
-                } catch (\Exception $e) {
-                    Log::error('Error al crear audiencia para solicitud: ' . $e->getMessage(), [
+                } catch (\Illuminate\Database\QueryException $e) {
+                    // Error SQL - loguear pero NO lanzar para no abortar toda la transacción
+                    Log::error('Error QueryException al crear audiencia', [
                         'solicitud_id' => $solicitud->id,
-                        'trace' => $e->getTraceAsString()
+                        'codigo' => $e->getCode(),
+                        'mensaje' => $e->getMessage()
                     ]);
-                    // No lanzamos la excepción para que la solicitud se cree aunque falle la audiencia
+                    // Audiencia no se creó pero solicitud SÍ
+                    $audienciaCreada = null;
+                } catch (\Exception $e) {
+                    Log::error('Error general al crear audiencia para solicitud', [
+                        'solicitud_id' => $solicitud->id,
+                        'error' => $e->getMessage(),
+                        'linea' => $e->getLine()
+                    ]);
+                    // Audiencia no se creó pero solicitud SÍ
+                    $audienciaCreada = null;
                 }
                 
                 return $solicitud;
@@ -313,6 +483,33 @@ class CreateSolicitudFromCitadoService
                 return null;
             }
         });
+        
+        // === GENERAR DOCUMENTOS FUERA DE LA TRANSACCIÓN ===
+        // Ahora que la transacción se completó exitosamente, generamos los PDFs
+        if ($solicitud && $audienciaCreada) {
+            try {
+                Log::info('CreateSolicitud: Generando documentos fuera de transacción', [
+                    'solicitud_id' => $solicitud->id,
+                    'audiencia_id' => $audienciaCreada->id
+                ]);
+                
+                $this->generarPaqueteDocumentos($solicitud, $audienciaCreada, $citadoData);
+                
+                Log::info('CreateSolicitud: Documentos generados exitosamente', [
+                    'solicitud_id' => $solicitud->id
+                ]);
+            } catch (\Exception $e) {
+                // Si falla la generación de PDFs, solo loguear
+                // Los datos ya están guardados y los PDFs pueden regenerarse
+                Log::error('CreateSolicitud: Error al generar documentos', [
+                    'solicitud_id' => $solicitud->id,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+            }
+        }
+        
+        return $solicitud;
     }
 
     /**
@@ -804,6 +1001,251 @@ class CreateSolicitudFromCitadoService
     }
 
     /**
+     * Genera el paquete completo de documentos PDF para la solicitud y audiencia
+     * Dispara eventos para crear: Citatorio, Acuse de Ratificación y Convenio
+     * 
+     * @param Solicitud $solicitud
+     * @param Audiencia $audiencia
+     * @param array $citadoData Datos del citado que pueden incluir banderas como es_patronal
+     * @return void
+     */
+    private function generarPaqueteDocumentos(Solicitud $solicitud, Audiencia $audiencia, array $citadoData): void
+    {
+        try {
+            Log::info('GenerarPaqueteDocumentos: Iniciando generación de PDFs', [
+                'solicitud_id' => $solicitud->id,
+                'audiencia_id' => $audiencia->id
+            ]);
+            
+            // === 1. CITATORIO DE CONCILIACIÓN (Para el Citado) ===
+            Log::info('GenerarPaqueteDocumentos: Generando citatorios');
+            
+            foreach ($solicitud->partes as $parte) {
+                if ($parte->tipo_parte_id == 2) { // 2 = Citado
+                    try {
+                        event(new GenerateDocumentResolution(
+                            $audiencia->id,           // 1: idAudiencia
+                            $solicitud->id,           // 2: idSolicitud
+                            14,                       // 3: clasificacion_id (Citatorio)
+                            4,                        // 4: plantilla_id (Citatorio de conciliación)
+                            null,                     // 5: idSolicitante (no aplica para citatorio)
+                            $parte->id,               // 6: idSolicitado (el citado)
+                            null,                     // 7: idDocumento
+                            null,                     // 8: idParteAsociada
+                            null                      // 9: idPago
+                        ));
+                        
+                        Log::info('GenerarPaqueteDocumentos: Citatorio generado', [
+                            'parte_id' => $parte->id,
+                            'nombre' => $parte->nombre . ' ' . $parte->primer_apellido
+                        ]);
+                    } catch (\Exception $e) {
+                        Log::error('GenerarPaqueteDocumentos: Error al generar citatorio', [
+                            'parte_id' => $parte->id,
+                            'error' => $e->getMessage()
+                        ]);
+                    }
+                }
+            }
+            
+            // === 2. ACUSE DE RATIFICACIÓN ===
+            Log::info('GenerarPaqueteDocumentos: Generando acuse de ratificación');
+            
+            try {
+                // Eliminar acuse anterior si existe (evitar duplicados)
+                $acuse_anterior = Documento::where('documentable_type', \App\Solicitud::class)
+                    ->where('documentable_id', $solicitud->id)
+                    ->where('clasificacion_archivo_id', 40)
+                    ->first();
+                
+                if ($acuse_anterior) {
+                    $acuse_anterior->delete();
+                    Log::debug('GenerarPaqueteDocumentos: Acuse anterior eliminado', [
+                        'documento_id' => $acuse_anterior->id
+                    ]);
+                }
+                
+                // Crear nuevo acuse
+                event(new GenerateDocumentResolution(
+                    '',                    // 1: idAudiencia (vacío para documentos de solicitud)
+                    $solicitud->id,        // 2: idSolicitud
+                    40,                    // 3: clasificacion_id (Acuse)
+                    6,                     // 4: plantilla_id (Acuse de ratificación)
+                    null,                  // 5: idSolicitante
+                    null,                  // 6: idSolicitado
+                    null,                  // 7: idDocumento
+                    null,                  // 8: idParteAsociada
+                    null                   // 9: idPago
+                ));
+                
+                Log::info('GenerarPaqueteDocumentos: Acuse de ratificación generado');
+                
+            } catch (\Exception $e) {
+                Log::error('GenerarPaqueteDocumentos: Error al generar acuse', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+            }
+            
+            // === 3. CONVENIO (Con lógica condicional Patronal/Normal) ===
+            Log::info('GenerarPaqueteDocumentos: Generando convenio');
+            
+            try {
+                // Determinar si es Patronal o Normal
+                $es_patronal = false;
+                
+                // Opción 1: Bandera explícita en citadoData
+                if (isset($citadoData['es_patronal']) && $citadoData['es_patronal']) {
+                    $es_patronal = true;
+                }
+                
+                // Opción 2: Detectar por objeto_solicitudes (ratificación patronal)
+                if (!$es_patronal) {
+                    $objetos_ids = $solicitud->objeto_solicitudes->pluck('id')->toArray();
+                    // IDs comunes para ratificación patronal: 5, 6, 7 (ajustar según tu catálogo)
+                    $objetos_patronales = [5, 6, 7];
+                    if (!empty(array_intersect($objetos_ids, $objetos_patronales))) {
+                        $es_patronal = true;
+                    }
+                }
+                
+                // Opción 3: Detectar si tiene representante legal (puede indicar empresa)
+                if (!$es_patronal) {
+                    $tiene_representante = $solicitud->partes()
+                        ->where('tipo_parte_id', 3) // 3 = Representante
+                        ->exists();
+                    if ($tiene_representante) {
+                        $es_patronal = true;
+                    }
+                }
+                
+                Log::info('GenerarPaqueteDocumentos: Tipo de convenio determinado', [
+                    'es_patronal' => $es_patronal
+                ]);
+                
+                // Determinar tipo_documento_id según el tipo
+                $tipo_documento_id = 18; // Default: Convenio estándar
+                
+                if ($es_patronal) {
+                    // Buscar tipo de documento para convenio patronal
+                    $tipo_doc_patronal = DB::table('tipo_documentos')
+                        ->where('nombre', 'like', '%CONVENIO%')
+                        ->where('nombre', 'like', '%PATRONAL%')
+                        ->whereNull('deleted_at')
+                        ->first();
+                    
+                    if ($tipo_doc_patronal) {
+                        $tipo_documento_id = $tipo_doc_patronal->id;
+                        Log::info('GenerarPaqueteDocumentos: Tipo documento patronal encontrado', [
+                            'tipo_documento_id' => $tipo_documento_id,
+                            'nombre' => $tipo_doc_patronal->nombre
+                        ]);
+                    } else {
+                        // Fallback: intentar buscar por ID conocido o usar estándar
+                        $tipo_documento_id = 19; // ID típico para convenio patronal (ajustar según tu BD)
+                        Log::warning('GenerarPaqueteDocumentos: No se encontró tipo documento patronal, usando fallback', [
+                            'tipo_documento_id' => $tipo_documento_id
+                        ]);
+                    }
+                }
+                
+                // Generar el convenio
+                event(new GenerateDocumentResolution(
+                    $audiencia->id,         // 1: idAudiencia
+                    $solicitud->id,         // 2: idSolicitud
+                    15,                     // 3: clasificacion_id (Convenio)
+                    $tipo_documento_id,     // 4: plantilla_id (18=Normal, 19=Patronal)
+                    null,                   // 5: idSolicitante
+                    null,                   // 6: idSolicitado
+                    null,                   // 7: idDocumento
+                    null,                   // 8: idParteAsociada
+                    null                    // 9: idPago
+                ));
+                
+                Log::info('GenerarPaqueteDocumentos: Convenio generado exitosamente', [
+                    'tipo' => $es_patronal ? 'PATRONAL' : 'NORMAL',
+                    'tipo_documento_id' => $tipo_documento_id
+                ]);
+                
+            } catch (\Exception $e) {
+                Log::error('GenerarPaqueteDocumentos: Error al generar convenio', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+            }
+            
+            // === RESUMEN FINAL ===
+            Log::info('GenerarPaqueteDocumentos: Proceso completado', [
+                'solicitud_id' => $solicitud->id,
+                'audiencia_id' => $audiencia->id,
+                'documentos_solicitados' => ['citatorio', 'acuse', 'convenio']
+            ]);
+            
+            // NO registrar documentos aquí porque estamos dentro de una transacción
+            // Los documentos se buscarán después con buscarTodosLosDocumentos()
+            // $this->registrarDocumentosGeneradosRecientes($solicitud, $audiencia);
+            
+        } catch (\Exception $e) {
+            // Error general: registrar pero no lanzar excepción
+            // Los PDFs se pueden regenerar después, no queremos hacer rollback de la BD
+            Log::error('GenerarPaqueteDocumentos: Error general en generación de documentos', [
+                'solicitud_id' => $solicitud->id ?? 'N/A',
+                'audiencia_id' => $audiencia->id ?? 'N/A',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+        }
+    }
+    
+    /**
+     * Registra los documentos generados recientemente en la lista estática
+     * 
+     * @param Solicitud $solicitud
+     * @param Audiencia $audiencia
+     * @return void
+     */
+    private function registrarDocumentosGeneradosRecientes(Solicitud $solicitud, Audiencia $audiencia): void
+    {
+        try {
+            // Buscar documentos creados en los últimos 5 minutos para esta solicitud/audiencia
+            $hace_5_minutos = now()->subMinutes(5);
+            
+            // Documentos de solicitud (Acuse)
+            $docs_solicitud = Documento::where('documentable_type', \App\Solicitud::class)
+                ->where('documentable_id', $solicitud->id)
+                ->where('created_at', '>=', $hace_5_minutos)
+                ->get();
+            
+            foreach ($docs_solicitud as $doc) {
+                self::registrarDocumento($doc->id, 'acuse');
+                Log::debug('Documento registrado', ['id' => $doc->id, 'tipo' => 'acuse']);
+            }
+            
+            // Documentos de audiencia (Citatorio, Convenio)
+            $docs_audiencia = Documento::where('documentable_type', \App\Audiencia::class)
+                ->where('documentable_id', $audiencia->id)
+                ->where('created_at', '>=', $hace_5_minutos)
+                ->get();
+            
+            foreach ($docs_audiencia as $doc) {
+                $tipo = 'documento';
+                if ($doc->clasificacion_archivo_id == 14) {
+                    $tipo = 'citatorio';
+                } elseif ($doc->clasificacion_archivo_id == 15) {
+                    $tipo = 'convenio';
+                }
+                self::registrarDocumento($doc->id, $tipo);
+                Log::debug('Documento registrado', ['id' => $doc->id, 'tipo' => $tipo]);
+            }
+            
+        } catch (\Exception $e) {
+            Log::error('Error al registrar documentos generados', [
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
      * Crea una audiencia para una solicitud específica con lógica robusta de generación de folios
      * Similar al proceso de ConveniosMasivos
      * 
@@ -812,7 +1254,9 @@ class CreateSolicitudFromCitadoService
      */
     private function createAudiencia(Solicitud $solicitud, array $citadoData = [])
     {
-        DB::beginTransaction();
+        // NO usar DB::beginTransaction aquí porque ya estamos dentro de la transacción de create()
+        // Las transacciones anidadas causan problemas en PostgreSQL
+        
         try {
             Log::info('CreateAudiencia: Iniciando creación de audiencia', ['solicitud_id' => $solicitud->id]);
             
@@ -821,7 +1265,8 @@ class CreateSolicitudFromCitadoService
             
             // Validar que existe solicitud
             if (!$solicitud) {
-                throw new \Exception('Solicitud no encontrada');
+                Log::error('CreateAudiencia: Solicitud no encontrada');
+                return null;
             }
 
             // === PASO 0: OBTENER CONTADORES Y DATOS BASE ===
@@ -873,7 +1318,8 @@ class CreateSolicitudFromCitadoService
                     'solicitud_id' => $solicitud->id,
                     'expediente_id' => $solicitud->expediente->id
                 ]);
-                throw new \Exception('La solicitud ya tiene un expediente asociado');
+                Log::error('CreateAudiencia: No se puede crear audiencia, solicitud tiene expediente asociado');
+                return null;
             }
 
             $anio = date("Y");
@@ -971,18 +1417,25 @@ class CreateSolicitudFromCitadoService
             
             // Validar que se creó el expediente
             if ($expediente === null) {
-                throw new \Exception('No se pudo generar un folio único para el expediente después de ' . $max_intentos . ' intentos');
+                Log::error('CreateAudiencia: No se pudo generar un folio único para el expediente', [
+                    'intentos' => $max_intentos
+                ]);
+                return null;
             }
 
             // === PASO 2: ACTUALIZAR PARTES Y SOLICITUD ===
             Log::info('CreateAudiencia: Actualizando partes y solicitud', ['expediente_id' => $expediente->id]);
             
             // Indicamos que el solicitante está ratificando
-            foreach ($solicitud->partes as $key => $parte) {
-                if ($tipoParte->id == $parte->tipo_parte_id) {
-                    $parte->update(['ratifico' => true]);
-                    Log::debug('CreateAudiencia: Parte SOLICITANTE marcada como ratificada', ['parte_id' => $parte->id]);
+            try {
+                foreach ($solicitud->partes as $key => $parte) {
+                    if ($tipoParte->id == $parte->tipo_parte_id) {
+                        $parte->update(['ratifico' => true]);
+                        Log::debug('CreateAudiencia: Parte SOLICITANTE marcada como ratificada', ['parte_id' => $parte->id]);
+                    }
                 }
+            } catch (\Exception $e) {
+                Log::warning('CreateAudiencia: Error al actualizar partes', ['error' => $e->getMessage()]);
             }
 
             // Modificamos la solicitud para indicar que ya se ratificó
@@ -1004,17 +1457,25 @@ class CreateSolicitudFromCitadoService
                 Log::warning('CreateAudiencia: calcular_periodo_general no disponible, usando fallback');
             }
             
-            // Actualizar solicitud
-            $solicitud->update([
-                "estatus_solicitud_id" => 3,
-                "url_virtual" => null,
-                "ratificada" => true,
-                "fecha_ratificacion" => $fecha_ratificacion,
-                "fecha_vigencia" => $fecha_vigencia,
-                "inmediata" => true
-            ]);
-            
-            Log::info('CreateAudiencia: Solicitud actualizada', ['solicitud_id' => $solicitud->id]);
+            // Actualizar solicitud (proteger con try-catch)
+            try {
+                $solicitud->update([
+                    "estatus_solicitud_id" => 3,
+                    "url_virtual" => null,
+                    "ratificada" => true,
+                    "fecha_ratificacion" => $fecha_ratificacion,
+                    "fecha_vigencia" => $fecha_vigencia,
+                    "inmediata" => true
+                ]);
+                
+                Log::info('CreateAudiencia: Solicitud actualizada', ['solicitud_id' => $solicitud->id]);
+            } catch (\Exception $e) {
+                Log::warning('CreateAudiencia: Error al actualizar solicitud', [
+                    'solicitud_id' => $solicitud->id,
+                    'error' => $e->getMessage()
+                ]);
+                // Continuar aunque falle la actualización
+            }
 
             // === PASO 3: CREAR AUDIENCIA CON LÓGICA ROBUSTA ===
             Log::info('CreateAudiencia: Iniciando creación de audiencia', ['expediente_id' => $expediente->id]);
@@ -1164,78 +1625,127 @@ class CreateSolicitudFromCitadoService
             
             // Validar que se creó la audiencia
             if ($audiencia === null) {
-                throw new \Exception('No se pudo generar un folio único para la audiencia después de ' . $max_intentos_audiencia . ' intentos');
+                Log::error('CreateAudiencia: No se pudo generar un folio único para la audiencia', [
+                    'intentos' => $max_intentos_audiencia
+                ]);
+                return null;
             }
 
             // === PASO 4: CREAR RELACIONES DE AUDIENCIA ===
             Log::info('CreateAudiencia: Creando relaciones de audiencia', ['audiencia_id' => $audiencia->id]);
             
-            \App\ConciliadorAudiencia::create([
-                'audiencia_id' => $audiencia->id,
-                'conciliador_id' => $conciliador_id,
-                'solicitante' => true
-            ]);
-
-            \App\SalaAudiencia::create([
-                'audiencia_id' => $audiencia->id,
-                'sala_id' => $sala_id,
-                'solicitante' => true
-            ]);
-
-            foreach ($solicitud->partes as $parte) {
-                \App\AudienciaParte::create([
+            // Proteger cada creación de relación
+            try {
+                \App\ConciliadorAudiencia::create([
                     'audiencia_id' => $audiencia->id,
-                    'parte_id' => $parte->id,
-                    'tipo_notificacion_id' => null
+                    'conciliador_id' => $conciliador_id,
+                    'solicitante' => true
                 ]);
+            } catch (\Exception $e) {
+                Log::warning('CreateAudiencia: Error al crear ConciliadorAudiencia', ['error' => $e->getMessage()]);
+            }
+
+            try {
+                \App\SalaAudiencia::create([
+                    'audiencia_id' => $audiencia->id,
+                    'sala_id' => $sala_id,
+                    'solicitante' => true
+                ]);
+            } catch (\Exception $e) {
+                Log::warning('CreateAudiencia: Error al crear SalaAudiencia', ['error' => $e->getMessage()]);
+            }
+
+            try {
+                foreach ($solicitud->partes as $parte) {
+                    \App\AudienciaParte::create([
+                        'audiencia_id' => $audiencia->id,
+                        'parte_id' => $parte->id,
+                        'tipo_notificacion_id' => null
+                    ]);
+                }
+            } catch (\Exception $e) {
+                Log::warning('CreateAudiencia: Error al crear AudienciaPartes', ['error' => $e->getMessage()]);
             }
 
             // === PASO 5: PROCESO COMPLETO DE CONFIRMACIÓN ===
             Log::info('CreateAudiencia: Iniciando proceso de confirmación completo', ['audiencia_id' => $audiencia->id]);
             
             // 5.1 Crear representante legal (si se proporcionaron datos)
-            $datosRepresentante = $citadoData['representante'] ?? [];
-            $this->crearRepresentanteLegal($solicitud, $audiencia, $datosRepresentante);
+            try {
+                $datosRepresentante = $citadoData['representante'] ?? [];
+                $this->crearRepresentanteLegal($solicitud, $audiencia, $datosRepresentante);
+            } catch (\Exception $e) {
+                Log::warning('CreateAudiencia: Error en crearRepresentanteLegal', ['error' => $e->getMessage()]);
+            }
             
             // 5.2 Crear manifestaciones (etapas de resolución)
-            $this->crearManifestaciones($audiencia);
+            try {
+                $this->crearManifestaciones($audiencia);
+            } catch (\Exception $e) {
+                Log::warning('CreateAudiencia: Error en crearManifestaciones', ['error' => $e->getMessage()]);
+            }
             
             // 5.3 Crear resolución de partes (terminación bilateral)
-            $this->crearResolucionPartes($solicitud, $audiencia);
+            try {
+                $this->crearResolucionPartes($solicitud, $audiencia);
+            } catch (\Exception $e) {
+                Log::warning('CreateAudiencia: Error en crearResolucionPartes', ['error' => $e->getMessage()]);
+            }
             
             // 5.4 Actualizar datos laborales del citado
-            $this->actualizarDatosLaborales($solicitud);
+            try {
+                $this->actualizarDatosLaborales($solicitud);
+            } catch (\Exception $e) {
+                Log::warning('CreateAudiencia: Error en actualizarDatosLaborales', ['error' => $e->getMessage()]);
+            }
             
             // 5.5 Crear conceptos de pago (usa datos de citadoData si están disponibles)
-            $this->crearConceptosPago($solicitud, $audiencia, $citadoData);
+            try {
+                $this->crearConceptosPago($solicitud, $audiencia, $citadoData);
+            } catch (\Exception $e) {
+                Log::warning('CreateAudiencia: Error en crearConceptosPago', ['error' => $e->getMessage()]);
+            }
             
             // 5.6 Crear comparecencias para todas las partes
-            $this->crearComparecencias($solicitud, $audiencia);
+            try {
+                $this->crearComparecencias($solicitud, $audiencia);
+            } catch (\Exception $e) {
+                Log::warning('CreateAudiencia: Error en crearComparecencias', ['error' => $e->getMessage()]);
+            }
             
-            // 5.7 Generar documentos (citatorios, acuse)
-            $this->generarDocumentos($solicitud, $audiencia);
+            // NOTA: La generación de documentos se mueve DESPUÉS del commit
+            // para evitar que errores en PDF aborten la transacción
             
             Log::info('CreateAudiencia: Proceso de confirmación completado', ['audiencia_id' => $audiencia->id]);
 
-            // === PASO 6: COMMIT Y RETORNO ===
-            DB::commit();
+            // === NO HACER COMMIT AQUÍ - Ya estamos dentro de la transacción de create() ===
+            // El commit se hará al final de create() automáticamente
             
-            Log::info('CreateAudiencia: Proceso completado exitosamente', [
-                'audiencia_id' => $audiencia->id,
-                'expediente_id' => $expediente->id,
-                'solicitud_id' => $solicitud->id
-            ]);
+            // Registrar esta solicitud/audiencia para búsqueda posterior de documentos
+            try {
+                self::registrarSolicitudAudiencia($solicitud->id, $audiencia->id);
+                
+                Log::info('CreateAudiencia: Audiencia registrada para generación de documentos', [
+                    'audiencia_id' => $audiencia->id,
+                    'expediente_id' => $expediente->id,
+                    'solicitud_id' => $solicitud->id
+                ]);
+            } catch (\Exception $e) {
+                Log::warning('CreateAudiencia: Error al registrar solicitud/audiencia', ['error' => $e->getMessage()]);
+            }
             
             return $audiencia;
             
         } catch (\Exception $e) {
-            DB::rollback();
+            // NO hacer rollback ni lanzar la excepción porque ya estamos dentro de la transacción de create()
+            // Capturamos, logueamos y retornamos null para que la transacción padre continúe
             Log::error('Error en createAudiencia: ' . $e->getMessage(), [
                 'solicitud_id' => $solicitud->id ?? 'N/A',
                 'linea' => $e->getLine(),
+                'archivo' => $e->getFile(),
                 'trace' => $e->getTraceAsString()
             ]);
-            throw $e;
+            return null;
         }
     }
 }

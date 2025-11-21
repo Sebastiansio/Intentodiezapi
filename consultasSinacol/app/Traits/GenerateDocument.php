@@ -50,7 +50,7 @@ trait GenerateDocument
      * Generar documento a partir de un modelo y de una plantilla
      * @return mixed
      */
-    public function generarConstancia($idAudiencia, $idSolicitud, $clasificacion_id,$plantilla_id, $idSolicitante = null, $idSolicitado = null,$idDocumento = null,$idParteAsociada = null)
+    public function generarConstancia($idAudiencia, $idSolicitud, $clasificacion_id,$plantilla_id, $idSolicitante = null, $idSolicitado = null,$idDocumento = null,$idParteAsociada = null, $idPago = null)
     {
       $plantilla = PlantillaDocumento::find($plantilla_id);
       if($plantilla != null){
@@ -326,6 +326,14 @@ trait GenerateDocument
     private function getDataModelos($idAudiencia,$idSolicitud, $idPlantilla, $idSolicitante, $idSolicitado,$idDocumento)
     {
       try {
+            Log::info('getDataModelos: Iniciando', [
+                'idAudiencia' => $idAudiencia,
+                'idSolicitud' => $idSolicitud,
+                'idPlantilla' => $idPlantilla,
+                'idSolicitante' => $idSolicitante,
+                'idSolicitado' => $idSolicitado,
+                'idDocumento' => $idDocumento
+            ]);
             
             $plantilla = PlantillaDocumento::find($idPlantilla);
             $tipo_plantilla = TipoDocumento::find($plantilla->tipo_documento_id);
@@ -1454,7 +1462,7 @@ trait GenerateDocument
             Log::error('En script:'.$e->getFile()." En línea: ".$e->getLine().
                        " Se emitió el siguiente mensaje: ". $e->getMessage().
                        " Con código: ".$e->getCode()." La traza es: ". $e->getTraceAsString());
-            return $data;
+            return []; // Retornar array vacío en lugar de $data que no existe
           }
     }
     function lreplace($search, $replace, $original){

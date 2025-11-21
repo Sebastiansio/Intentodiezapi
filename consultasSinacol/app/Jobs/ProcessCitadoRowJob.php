@@ -35,29 +35,40 @@ class ProcessCitadoRowJob implements ShouldQueue
             $solicitud = $createSolicitudService->create($this->rowData);
 
             if (is_null($solicitud)) {
-                Log::warning('No se pudo crear la solicitud (Servicio retornó null).', $this->rowData);
+                Log::warning('No se pudo crear la solicitud (Servicio retornó null).', [
+                    'curp' => $this->rowData['curp'] ?? 'N/A',
+                    'nombre' => $this->rowData['nombre'] ?? 'N/A'
+                ]);
             } else {
-                Log::info('Solicitud creada exitosamente con ID: ' . $solicitud->id, $this->rowData);
+                Log::info('Solicitud creada exitosamente con ID: ' . $solicitud->id, [
+                    'solicitud_id' => $solicitud->id,
+                    'curp' => $this->rowData['curp'] ?? 'N/A'
+                ]);
             }
 
         } catch (\Exception $e) {
-            // Si el servicio falla, se registra el error y los datos que fallaron.
-            Log::error('Fallo al procesar una fila del Excel: ' . $e->getMessage(), array_merge(['trace' => $e->getTraceAsString()], $this->rowData));
+            // Si el servicio falla, se registra el error
+            Log::error('Fallo al procesar una fila del Excel: ' . $e->getMessage(), [
+                'trace' => $e->getTraceAsString(),
+                'curp' => $this->rowData['curp'] ?? 'N/A',
+                'nombre' => $this->rowData['nombre'] ?? 'N/A',
+                'linea' => $e->getLine(),
+                'archivo' => $e->getFile()
+            ]);
 
-            // Asegurarnos de que la conexión a la base de datos no quede en estado 'aborted'
+            // Limpiar el estado de la conexión sin lanzar excepciones
             try {
-                DB::rollBack();
+                // Si estamos en una transacción, intentar rollback
+                if (DB::transactionLevel() > 0) {
+                    DB::rollBack();
+                }
             } catch (\Exception $_) {
-                // ignore
-            }
-            try {
-                DB::disconnect();
-            } catch (\Exception $_) {
-                // ignore
+                // Ignorar errores del rollback
             }
 
-            // Re-throw para que el sistema de colas marque este job como fallido/sea reintentado según configuración
-            throw $e;
+            // NO relanzar la excepción para que la transacción padre de Excel continúe
+            // y las demás filas se puedan procesar
+            // throw $e; // COMENTADO - Esto causaba el error 25P02
         }
     }
 }

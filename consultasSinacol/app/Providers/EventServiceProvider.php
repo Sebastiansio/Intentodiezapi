@@ -18,6 +18,10 @@ class EventServiceProvider extends ServiceProvider
         Registered::class => [
             SendEmailVerificationNotification::class,
         ],
+        \App\Events\GenerateDocumentResolution::class => [
+            \App\Listeners\SaveResolution::class,
+            \App\Listeners\GestionMultas\AnalizaResolucionDeterminaMulta::class,
+        ],
     ];
 
     /**

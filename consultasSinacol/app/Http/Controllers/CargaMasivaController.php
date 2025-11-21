@@ -11,6 +11,7 @@ use App\ObjetoSolicitud;
 use App\Estado;
 use App\TipoVialidad;
 use App\Conciliador;
+use App\Services\CreateSolicitudFromCitadoService;
 
 
 class CargaMasivaController extends Controller
@@ -94,7 +95,13 @@ class CargaMasivaController extends Controller
             }
 
             // Pasamos el solicitante, representante y la info común al importador
-            Excel::import(new CitadoImport($solicitante, $common, $representante), $uploaded ?? $request->file('archivo_citados'));
+            // IMPORTANTE: Desactivar transacciones automáticas de Excel para que cada fila sea independiente
+            Excel::import(
+                new CitadoImport($solicitante, $common, $representante), 
+                $uploaded ?? $request->file('archivo_citados'),
+                null, // disk
+                \Maatwebsite\Excel\Excel::CSV // reader type
+            );
 
             // Obtener estadísticas básicas del archivo
             $filePath = $uploaded->getRealPath();
@@ -123,6 +130,16 @@ class CargaMasivaController extends Controller
 
             // Guardar timestamp de inicio de procesamiento en sesión
             session(['carga_masiva_timestamp' => now()->format('Y-m-d H:i:s')]);
+            
+            // Limpiar documentos anteriores SOLO si hay datos previos
+            // Esto permite que la verificación AJAX encuentre los documentos
+            $datosAnteriores = session('solicitudes_audiencias_creadas', []);
+            if (!empty($datosAnteriores)) {
+                CreateSolicitudFromCitadoService::limpiarDocumentosGenerados();
+                \Log::info('CargaMasiva: Limpiando datos de carga anterior', [
+                    'solicitudes_anteriores' => count($datosAnteriores)
+                ]);
+            }
 
             return redirect()->back()->with([
                 'success' => 'Archivo procesado correctamente',

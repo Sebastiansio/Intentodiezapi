@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\AudienciasController;
 use App\Http\Controllers\CargaMasivaController;
+use App\Http\Controllers\DescargaDocumentosController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -32,3 +33,7 @@ Route::post('/carga-masiva', [CargaMasivaController::class, 'handleUpload'])->na
 
 // Ruta alternativa/compatibilidad para la vista de solicitudes masivas
 Route::post('/solicitud/masiva', [CargaMasivaController::class, 'handleUpload'])->name('solicitud.masiva.store');
+
+// Rutas para descarga de documentos ZIP
+Route::get('/carga-masiva/descargar-zip', [DescargaDocumentosController::class, 'descargarZip'])->name('carga.descargar.zip');
+Route::get('/carga-masiva/verificar-documentos', [DescargaDocumentosController::class, 'verificarDocumentos'])->name('carga.verificar.documentos');

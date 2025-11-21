@@ -1,0 +1,39 @@
+{
+  "datos": [
+    {
+      "id": "1",
+      "objeto": "Solicitud",
+      "descripcion": "Datos de la solicitud de conciliación"
+    },
+    {
+      "id": "2",
+      "objeto": "Parte",
+      "descripcion": "Datos de las partes (solicitantes y citados)"
+    },
+    {
+      "id": "3",
+      "objeto": "Expediente",
+      "descripcion": "Datos del expediente"
+    },
+    {
+      "id": "4",
+      "objeto": "Audiencia",
+      "descripcion": "Datos de la audiencia"
+    },
+    {
+      "id": "5",
+      "objeto": "Conciliador",
+      "descripcion": "Datos del conciliador asignado"
+    },
+    {
+      "id": "6",
+      "objeto": "Centro",
+      "descripcion": "Datos del centro de conciliación"
+    },
+    {
+      "id": "7",
+      "objeto": "Resolucion",
+      "descripcion": "Datos de la resolución"
+    }
+  ]
+}

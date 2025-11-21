@@ -208,6 +208,28 @@
                         </div>
                     </div>
                     @endif
+                    
+                    <!-- Botón de descarga de documentos ZIP -->
+                    <div id="download-container" class="mt-4" style="display: none;">
+                        <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-xl p-4">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center">
+                                    <div class="bg-blue-500 rounded-full p-3 mr-3">
+                                        <i class="fas fa-file-archive text-white text-xl"></i>
+                                    </div>
+                                    <div>
+                                        <h4 class="text-lg font-bold text-blue-900">Documentos Listos</h4>
+                                        <p class="text-sm text-blue-700">Los documentos PDF han sido generados exitosamente</p>
+                                    </div>
+                                </div>
+                                <a href="{{ route('carga.descargar.zip') }}" 
+                                   class="inline-flex items-center px-6 py-3 bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white font-bold rounded-xl shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200">
+                                    <i class="fas fa-download mr-2"></i>
+                                    Descargar ZIP
+                                </a>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1013,6 +1035,8 @@
                                 stopProgressMonitoring();
                                 if (data.resumen.completado) {
                                     showCompletionMessage(data);
+                                    // Verificar si hay documentos disponibles para descargar
+                                    verificarDocumentosDisponibles();
                                 }
                             }
                         } else {
@@ -1102,6 +1126,98 @@
                     
                     progressContainer.insertAdjacentHTML('beforeend', completionHTML);
                 }
+            }
+            
+            // ==================== VERIFICAR DOCUMENTOS DISPONIBLES ====================
+            let intentosVerificacion = 0;
+            const MAX_INTENTOS = 6; // 6 intentos × 5 segundos = 30 segundos máximo
+            
+            async function verificarDocumentosDisponibles() {
+                try {
+                    console.log(`📄 Verificando documentos disponibles (intento ${intentosVerificacion + 1}/${MAX_INTENTOS})...`);
+                    
+                    const response = await fetch('/carga-masiva/verificar-documentos', {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-Requested-With': 'XMLHttpRequest'
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        console.log('📄 Resultado verificación:', data);
+                        
+                        if (data.disponibles && data.total > 0) {
+                            // ¡Documentos encontrados!
+                            mostrarBotonDescarga(data.total);
+                            intentosVerificacion = 0; // Resetear contador
+                        } else {
+                            // No hay documentos aún
+                            intentosVerificacion++;
+                            
+                            if (intentosVerificacion < MAX_INTENTOS) {
+                                // Reintentar después de 5 segundos
+                                console.log(`⏳ Documentos aún no disponibles. Reintentando en 5 segundos...`);
+                                setTimeout(verificarDocumentosDisponibles, 5000);
+                            } else {
+                                // Se alcanzó el máximo de intentos
+                                console.warn('⚠️ Tiempo de espera agotado. Los documentos pueden tardar más de lo esperado.');
+                                mostrarMensajeEsperaDocumentos();
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('❌ Error al verificar documentos:', error);
+                    intentosVerificacion++;
+                    
+                    if (intentosVerificacion < MAX_INTENTOS) {
+                        setTimeout(verificarDocumentosDisponibles, 5000);
+                    }
+                }
+            }
+            
+            function mostrarBotonDescarga(totalDocumentos) {
+                const downloadContainer = document.getElementById('download-container');
+                if (downloadContainer) {
+                    // Actualizar el texto con el total de documentos
+                    const descriptionText = downloadContainer.querySelector('p');
+                    if (descriptionText) {
+                        descriptionText.textContent = `${totalDocumentos} documento(s) PDF han sido generados exitosamente`;
+                    }
+                    
+                    // Mostrar el contenedor con animación
+                    downloadContainer.style.display = 'block';
+                    downloadContainer.classList.add('animate-slide-up');
+                    
+                    console.log('✅ Botón de descarga mostrado');
+                }
+            }
+            
+            function mostrarMensajeEsperaDocumentos() {
+                const progressContainer = document.getElementById('progress-container');
+                if (progressContainer) {
+                    const mensaje = document.createElement('div');
+                    mensaje.className = 'mt-4 p-4 bg-yellow-50 border border-yellow-300 rounded-lg text-center';
+                    mensaje.innerHTML = `
+                        <p class="text-yellow-800 font-semibold">⏳ Los documentos aún se están generando</p>
+                        <p class="text-yellow-600 text-sm mt-2">
+                            Esto puede tomar algunos minutos. 
+                            <button onclick="intentosVerificacion = 0; verificarDocumentosDisponibles();" 
+                                    class="text-blue-600 underline hover:text-blue-800">
+                                Verificar ahora
+                            </button>
+                        </p>
+                    `;
+                    progressContainer.appendChild(mensaje);
+                }
+            }
+            
+            // Verificar al cargar la página si ya hay documentos disponibles
+            if (document.getElementById('progress-container')) {
+                setTimeout(() => {
+                    verificarDocumentosDisponibles();
+                }, 2000); // Esperar 2 segundos después de cargar
             }
 
             // ==================== UPPERCASE AUTOMÁTICO ====================

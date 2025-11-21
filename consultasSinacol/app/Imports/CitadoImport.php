@@ -5,12 +5,13 @@ namespace App\Imports;
 use Illuminate\Support\Collection;
 use Maatwebsite\Excel\Concerns\ToCollection;
 use Maatwebsite\Excel\Concerns\WithHeadingRow;
+use Maatwebsite\Excel\Concerns\WithChunkReading;
 use App\Jobs\ProcessCitadoRowJob;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 
-class CitadoImport implements ToCollection, WithHeadingRow
+class CitadoImport implements ToCollection, WithHeadingRow, WithChunkReading
 {
     protected $solicitante = [];
     protected $common = [];
@@ -26,6 +27,16 @@ class CitadoImport implements ToCollection, WithHeadingRow
         $this->common = $common;
         $this->representante = $representante;
     }
+    
+    /**
+     * Define el tamaño del chunk para procesar filas
+     * @return int
+     */
+    public function chunkSize(): int
+    {
+        return 100; // Procesar de 100 en 100 filas
+    }
+    
     /**
     * @param Collection $rows
     */
@@ -63,9 +74,14 @@ class CitadoImport implements ToCollection, WithHeadingRow
             try {
                 ProcessCitadoRowJob::dispatch($payload);
             } catch (\Exception $e) {
-                Log::error('CitadoImport: fallo al despachar job', ['error' => $e->getMessage(), 'row' => $payload]);
-                // rethrow for visibility
-                throw $e;
+                // NO relanzar la excepción para que la transacción de Excel continúe
+                // Solo loguear el error y continuar con la siguiente fila
+                Log::error('CitadoImport: fallo al despachar job', [
+                    'error' => $e->getMessage(),
+                    'curp' => $payload['curp'] ?? 'N/A',
+                    'nombre' => $payload['nombre'] ?? 'N/A'
+                ]);
+                // NO hacer throw $e; aquí
             }
         }
     }
