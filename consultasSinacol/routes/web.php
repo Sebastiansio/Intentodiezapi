@@ -1,7 +1,9 @@
 <?php
 
 use App\Http\Controllers\AudienciasController;
+use App\Http\Controllers\AuthController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\ReporteController;
 
 /*
 |--------------------------------------------------------------------------
@@ -15,8 +17,18 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::get('/', function () {
-    return view('welcome');
+    return redirect('/login');
 });
+
+// Rutas de autenticación
+Route::get('/login', [AuthController::class, 'showLoginForm'])->name('login');
+Route::post('/login', [AuthController::class, 'login']);
+Route::get('/logout', [AuthController::class, 'logout'])->name('logout');
+
+// Ruta protegida para la vista de consulta de expedientes
+Route::get('/consulta-expedientes', function () {
+    return view('reportes.expedientes');
+})->middleware('check.authenticated');
 
 
 Route::get('/audiencias/dia-siguiente', [AudienciasController::class, 'getAudienciasDiaSiguiente']);
@@ -25,3 +37,4 @@ Route::get('/audiencias/por-dia', [AudienciasController::class, 'getAudienciasPo
 Route::post('/expedientes/check-folio', [AudienciasController::class, 'checkFolioExists']);
 Route::get('/audiencias/coutconcluidas', [AudienciasController::class, 'getTotalAudienciasCount']);
 Route::post('/citas/datos-solicitud', [AudienciasController::class, 'datosSolicitud']);
+Route::get('/reporte-expedientes', [ReporteController::class, 'expedientesPorFecha']);

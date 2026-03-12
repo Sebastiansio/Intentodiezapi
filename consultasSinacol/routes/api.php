@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AudienciasController;
+use App\Http\Controllers\ReporteController;
 
 /*
 |--------------------------------------------------------------------------
@@ -20,3 +21,6 @@ Route::get('citas/datos-solicitud/{folio}/{anio}', [AudienciasController::class,
         'folio' => '[a-zA-Z0-9\-]+', // Allows alphanumeric characters and hyphens
         'anio' => '[0-9]{4}',      // Requires a 4-digit number for the year     // Requires a numeric ID
     ]);
+
+
+Route::get('/reporte-expedientes', [ReporteController::class, 'expedientesPorFecha']);
