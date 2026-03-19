@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AudienciasController;
 use App\Http\Controllers\ReporteController;
+use App\Http\Controllers\Api\DashboardController;
 
 /*
 |--------------------------------------------------------------------------
@@ -15,6 +16,11 @@ use App\Http\Controllers\ReporteController;
 | is assigned the "api" middleware group. Enjoy building your API!
 |
 */
+
+// Rutas de Dashboard para conciliadores y sus audiencias
+Route::get('dashboard/conciliadores', [DashboardController::class, 'getConciliadores']);
+Route::get('dashboard/conciliadores/{id}/audiencias', [DashboardController::class, 'getAudiencias']);
+Route::get('dashboard/conciliadores/{id}/estadisticas', [DashboardController::class, 'getEstadisticas']);
 
 Route::get('citas/datos-solicitud/{folio}/{anio}', [AudienciasController::class, 'datosSolicitud'])
     ->where([
