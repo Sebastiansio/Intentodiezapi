@@ -17,7 +17,7 @@ class DashboardController extends Controller
     {
         $centrosPermitidos = [38, 48, 39]; // Filtros de centros solicitados
 
-        $conciliadores = Conciliador::with('persona')
+        $conciliadores = Conciliador::with(['persona', 'centro'])
             ->whereIn('centro_id', $centrosPermitidos)
             ->get()
             ->map(function($c) {
@@ -27,7 +27,8 @@ class DashboardController extends Controller
                 return [
                     'id' => $c->id,
                     'nombre' => $nombre,
-                    'centro_id' => $c->centro_id
+                    'centro_id' => $c->centro_id,
+                    'centro_nombre' => $c->centro ? $c->centro->nombre : 'Sin centro'
                 ];
             });
 
@@ -58,7 +59,11 @@ class DashboardController extends Controller
                           $q->where('conciliador_id', $id);
                       });
             })
-            ->with(['expediente', 'salasAudiencias.sala'])
+            ->whereHas('expediente.solicitud', function ($query) {
+                // Filtramos que la solicitud no sea inmediata
+                $query->where('inmediata', false);
+            })
+            ->with(['expediente.solicitud', 'salasAudiencias.sala', 'resolucion'])
             ->orderBy('fecha_audiencia')
             ->orderBy('hora_inicio')
             ->get()
@@ -75,11 +80,13 @@ class DashboardController extends Controller
                     'hora_fin' => $a->hora_fin,
                     'sala' => $sala,
                     'estado_audiencia_id' => $a->estado_audiencia_id,
-                    'resolucion_id' => $a->resolucion_id
+                    'resolucion_id' => $a->resolucion_id,
+                    'resolucion_nombre' => $a->resolucion ? $a->resolucion->nombre : 'Sin resolución'
                 ];
             });
 
-        return response()->json($audiencias);
+        // Usamos JSON_UNESCAPED_SLASHES para evitar que las barras / en el expediente se escapen con \
+        return response()->json($audiencias, 200, [], JSON_UNESCAPED_SLASHES);
     }
 
     /**
@@ -149,5 +156,69 @@ class DashboardController extends Controller
             'porcentaje_efectividad_general' => $efectividadGeneral,
             'porcentaje_efectividad_conciliacion' => $efectividadReal
         ]);
+    }
+
+    /**
+     * Obtiene un resumen general agrupado por días en un periodo determinado.
+     * Muestra total de audiencias en el día y agrupación por resoluciones.
+     */
+    public function getResumenGeneral(Request $request)
+    {
+        $centrosPermitidos = [38, 48, 39];
+
+        $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
+        $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
+
+        // Identificar IDs de conciliadores válidos según los centros
+        $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosPermitidos)->pluck('id')->toArray();
+
+        // Obtener todas las audiencias aplicando filtros y relaciones (y que NO sean de solicitud inmediata)
+        $audiencias = Audiencia::whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
+            ->where(function($query) use ($conciliadoresIdsValidos) {
+                $query->whereIn('conciliador_id', $conciliadoresIdsValidos)
+                      ->orWhereHas('conciliadoresAudiencias', function($q) use ($conciliadoresIdsValidos) {
+                          $q->whereIn('conciliador_id', $conciliadoresIdsValidos);
+                      });
+            })
+            ->whereHas('expediente.solicitud', function ($query) {
+                $query->where('inmediata', false);
+            })
+            ->with(['resolucion'])
+            ->orderBy('fecha_audiencia', 'asc')
+            ->get();
+
+        // Agrumamos la data por día (fecha_audiencia)
+        $resumenDiario = $audiencias->groupBy('fecha_audiencia')->map(function ($audienciasDelDia, $fecha) {
+            $totalDelDia = $audienciasDelDia->count();
+            
+            // Sub-agrupamos por nombre de la resolución
+            $resolucionesAgrupadas = $audienciasDelDia->groupBy(function ($a) {
+                return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
+            })->map(function ($grupo) {
+                return $grupo->count();
+            });
+
+            return [
+                'fecha' => $fecha,
+                'total_audiencias' => $totalDelDia,
+                'resoluciones' => $resolucionesAgrupadas
+            ];
+        })->values(); // Lo hacemos array numérico para mejor legibilidad en el JSON
+
+        // Para darle un valor extra al front, mandamos también un consolidado de todo el periodo sumado
+        $totalGeneral = $audiencias->count();
+        $resolucionesGenerales = $audiencias->groupBy(function ($a) {
+            return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
+        })->map->count();
+
+        return response()->json([
+            'resumen_periodo' => [
+                'fecha_inicio' => $fechaInicio,
+                'fecha_fin' => $fechaFin,
+                'total_audiencias' => $totalGeneral,
+                'resoluciones' => $resolucionesGenerales,
+            ],
+            'desglose_diario' => $resumenDiario
+        ], 200, [], JSON_UNESCAPED_UNICODE);
     }
 }

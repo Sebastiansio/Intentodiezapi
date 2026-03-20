@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\DashboardController;
 */
 
 // Rutas de Dashboard para conciliadores y sus audiencias
+Route::get('dashboard/resumen-general', [DashboardController::class, 'getResumenGeneral']);
 Route::get('dashboard/conciliadores', [DashboardController::class, 'getConciliadores']);
 Route::get('dashboard/conciliadores/{id}/audiencias', [DashboardController::class, 'getAudiencias']);
 Route::get('dashboard/conciliadores/{id}/estadisticas', [DashboardController::class, 'getEstadisticas']);
