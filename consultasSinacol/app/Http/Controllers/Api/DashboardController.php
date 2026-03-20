@@ -13,12 +13,23 @@ class DashboardController extends Controller
     /**
      * Obtiene todos los conciliadores con su nombre.
      */
-    public function getConciliadores()
+    public function getConciliadores(Request $request)
     {
         $centrosPermitidos = [38, 48, 39]; // Filtros de centros solicitados
 
+        // Tomar fechas de la petición para filtrar audiencias, por default la semana actual
+        $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
+        $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
+
         $conciliadores = Conciliador::with(['persona', 'centro'])
             ->whereIn('centro_id', $centrosPermitidos)
+            // Filtramos para traer solo conciliadores que tengan audiencias en este periodo y que no sean inmediatas
+            ->whereHas('audiencias', function ($query) use ($fechaInicio, $fechaFin) {
+                $query->whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
+                      ->whereHas('expediente.solicitud', function ($subQuery) {
+                          $subQuery->where('inmediata', false);
+                      });
+            })
             ->get()
             ->map(function($c) {
                 $nombre = $c->persona 
