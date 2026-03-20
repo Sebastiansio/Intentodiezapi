@@ -15,7 +15,8 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule)
     {
-        // $schedule->command('inspire')->hourly();
+        // Ejecutar diario a media noche
+        $schedule->command('respaldo:expedientes')->dailyAt('01:00');
     }
 
     /**

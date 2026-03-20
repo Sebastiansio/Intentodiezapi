@@ -3,7 +3,8 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AudienciasController;
-use App\Http\Controllers\CargaMasivaStatusController;
+use App\Http\Controllers\ReporteController;
+use App\Http\Controllers\Api\DashboardController;
 
 /*
 |--------------------------------------------------------------------------
@@ -16,12 +17,16 @@ use App\Http\Controllers\CargaMasivaStatusController;
 |
 */
 
+// Rutas de Dashboard para conciliadores y sus audiencias
+Route::get('dashboard/conciliadores', [DashboardController::class, 'getConciliadores']);
+Route::get('dashboard/conciliadores/{id}/audiencias', [DashboardController::class, 'getAudiencias']);
+Route::get('dashboard/conciliadores/{id}/estadisticas', [DashboardController::class, 'getEstadisticas']);
+
 Route::get('citas/datos-solicitud/{folio}/{anio}', [AudienciasController::class, 'datosSolicitud'])
     ->where([
         'folio' => '[a-zA-Z0-9\-]+', // Allows alphanumeric characters and hyphens
         'anio' => '[0-9]{4}',      // Requires a 4-digit number for the year     // Requires a numeric ID
     ]);
 
-// Rutas para monitoreo de carga masiva
-Route::get('carga-masiva/status', [CargaMasivaStatusController::class, 'getStatus']);
-Route::get('carga-masiva/logs', [CargaMasivaStatusController::class, 'getLogs']);
+
+Route::get('/reporte-expedientes', [ReporteController::class, 'expedientesPorFecha']);

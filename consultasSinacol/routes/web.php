@@ -3,7 +3,9 @@
 use App\Http\Controllers\AudienciasController;
 use App\Http\Controllers\CargaMasivaController;
 use App\Http\Controllers\DescargaDocumentosController;
+use App\Http\Controllers\AuthController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\ReporteController;
 
 /*
 |--------------------------------------------------------------------------
@@ -17,8 +19,18 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::get('/', function () {
-    return view('welcome');
-})->name('home');
+    return redirect('/login');
+});
+
+// Rutas de autenticación
+Route::get('/login', [AuthController::class, 'showLoginForm'])->name('login');
+Route::post('/login', [AuthController::class, 'login']);
+Route::get('/logout', [AuthController::class, 'logout'])->name('logout');
+
+// Ruta protegida para la vista de consulta de expedientes
+Route::get('/consulta-expedientes', function () {
+    return view('reportes.expedientes');
+})->middleware('check.authenticated');
 
 
 Route::get('/audiencias/dia-siguiente', [AudienciasController::class, 'getAudienciasDiaSiguiente']);
@@ -37,3 +49,4 @@ Route::post('/solicitud/masiva', [CargaMasivaController::class, 'handleUpload'])
 // Rutas para descarga de documentos ZIP
 Route::get('/carga-masiva/descargar-zip', [DescargaDocumentosController::class, 'descargarZip'])->name('carga.descargar.zip');
 Route::get('/carga-masiva/verificar-documentos', [DescargaDocumentosController::class, 'verificarDocumentos'])->name('carga.verificar.documentos');
+Route::get('/reporte-expedientes', [ReporteController::class, 'expedientesPorFecha']);
