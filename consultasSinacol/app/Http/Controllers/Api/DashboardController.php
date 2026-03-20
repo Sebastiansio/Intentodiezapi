@@ -4,8 +4,8 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use App\Models\Conciliador;
-use App\Models\Audiencia;
+use App\Conciliador;
+use App\Audiencia;
 use Carbon\Carbon;
 
 class DashboardController extends Controller
