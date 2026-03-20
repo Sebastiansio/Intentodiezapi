@@ -135,7 +135,7 @@ class Audiencia extends Model implements Auditable
      * @return \Illuminate\Database\Eloquent\Relations\BelongsTo
      */
     public function expediente(){
-      return $this->belongsTo('App\Expediente');
+      return $this->belongsTo('App\Models\Expediente');
     }
 
     /**
@@ -160,7 +160,7 @@ class Audiencia extends Model implements Auditable
      * @return \Illuminate\Database\Eloquent\Relations\BelongsTo
      */
     public function resolucion(){
-      return $this->belongsTo('App\Resolucion');
+      return $this->belongsTo('App\Models\Resolucion');
     }
 
     /**
@@ -168,7 +168,7 @@ class Audiencia extends Model implements Auditable
      * @return \Illuminate\Database\Eloquent\Relations\HasMany
      */
     public function comparecientes(){
-      return $this->hasMany('App\Compareciente');
+      return $this->hasMany('App\Models\Compareciente');
     }
 
     /**
@@ -176,7 +176,7 @@ class Audiencia extends Model implements Auditable
      * @return \Illuminate\Database\Eloquent\Relations\HasMany
      */
     public function salasAudiencias(){
-      return $this->hasMany('App\SalaAudiencia');
+      return $this->hasMany('App\Models\SalaAudiencia');
     }
     /**
      * Relación con conciliadoresAudiencias

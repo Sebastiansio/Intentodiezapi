@@ -58,11 +58,14 @@ class DashboardController extends Controller
                           $q->where('conciliador_id', $id);
                       });
             })
-            ->with(['expediente', 'sala'])
+            ->with(['expediente', 'salasAudiencias.sala'])
             ->orderBy('fecha_audiencia')
             ->orderBy('hora_inicio')
             ->get()
             ->map(function($a) {
+                $sala = $a->salasAudiencias && $a->salasAudiencias->count() > 0 
+                        ? $a->salasAudiencias->first()->sala->sala 
+                        : 'Sin sala asignada';
                 return [
                     'id' => $a->id,
                     'expediente' => $a->expediente ? $a->expediente->folio : 'Sin expediente',
@@ -70,7 +73,7 @@ class DashboardController extends Controller
                     'fecha' => $a->fecha_audiencia,
                     'hora_inicio' => $a->hora_inicio,
                     'hora_fin' => $a->hora_fin,
-                    'sala' => $a->sala ? $a->sala->sala : 'Sin sala asignada',
+                    'sala' => $sala,
                     'estado_audiencia_id' => $a->estado_audiencia_id,
                     'resolucion_id' => $a->resolucion_id
                 ];
