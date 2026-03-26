@@ -74,7 +74,7 @@ class DashboardController extends Controller
                 // Filtramos que la solicitud no sea inmediata
                 $query->where('inmediata', false);
             })
-            ->select('id', 'expediente_id', 'resolucion_id', 'fecha_audiencia', 'hora_inicio', 'hora_fin', 'estado_audiencia_id')
+            ->select('id', 'expediente_id', 'resolucion_id', 'fecha_audiencia', 'hora_inicio', 'hora_fin')
             ->with(['expediente:id,folio,anio', 'salasAudiencias.sala:id,sala', 'resolucion:id,nombre'])
             ->orderBy('fecha_audiencia')
             ->orderBy('hora_inicio')
@@ -91,7 +91,7 @@ class DashboardController extends Controller
                     'hora_inicio' => $a->hora_inicio,
                     'hora_fin' => $a->hora_fin,
                     'sala' => $sala,
-                    'estado_audiencia_id' => $a->estado_audiencia_id,
+                    'estado_audiencia_id' => null, // La columna estado_audiencia_id no existe en la base de datos
                     'resolucion_id' => $a->resolucion_id,
                     'resolucion_nombre' => $a->resolucion ? $a->resolucion->nombre : 'Sin resolución'
                 ];
