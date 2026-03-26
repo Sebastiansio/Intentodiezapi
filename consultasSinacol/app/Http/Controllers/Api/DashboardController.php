@@ -74,7 +74,8 @@ class DashboardController extends Controller
                 // Filtramos que la solicitud no sea inmediata
                 $query->where('inmediata', false);
             })
-            ->with(['expediente.solicitud', 'salasAudiencias.sala', 'resolucion'])
+            ->select('id', 'expediente_id', 'resolucion_id', 'fecha_audiencia', 'hora_inicio', 'hora_fin', 'estado_audiencia_id')
+            ->with(['expediente:id,folio,anio', 'salasAudiencias.sala:id,sala', 'resolucion:id,nombre'])
             ->orderBy('fecha_audiencia')
             ->orderBy('hora_inicio')
             ->get()
@@ -139,7 +140,7 @@ class DashboardController extends Controller
             });
         }
 
-        $audiencias = $audienciasQuery->get();
+        $audiencias = $audienciasQuery->select('id', 'resolucion_id')->get();
 
         $totalAudiencias = $audiencias->count();
 
@@ -176,12 +177,22 @@ class DashboardController extends Controller
     public function getResumenGeneral(Request $request)
     {
         $centrosPermitidos = [38, 48, 39];
+        
+        $centroIdRequest = $request->query('centro_id');
+        if ($centroIdRequest && in_array($centroIdRequest, $centrosPermitidos)) {
+            $centrosFiltro = [$centroIdRequest];
+        } else {
+            $centrosFiltro = $centrosPermitidos;
+        }
 
         $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
         $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
 
         // Identificar IDs de conciliadores válidos según los centros
-        $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosPermitidos)->pluck('id')->toArray();
+        $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosFiltro)->pluck('id')->toArray();
+
+        // Obtener nombres de los centros filtrados
+        $centrosInfo = \App\Centro::whereIn('id', $centrosFiltro)->select('id', 'nombre')->get();
 
         // Obtener todas las audiencias aplicando filtros y relaciones (y que NO sean de solicitud inmediata)
         $audiencias = Audiencia::whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
@@ -194,7 +205,8 @@ class DashboardController extends Controller
             ->whereHas('expediente.solicitud', function ($query) {
                 $query->where('inmediata', false);
             })
-            ->with(['resolucion'])
+            ->select('id', 'fecha_audiencia', 'resolucion_id', 'conciliador_id')
+            ->with(['resolucion', 'conciliador.centro', 'conciliadoresAudiencias.conciliador.centro'])
             ->orderBy('fecha_audiencia', 'asc')
             ->get();
 
@@ -216,6 +228,34 @@ class DashboardController extends Controller
             ];
         })->values(); // Lo hacemos array numérico para mejor legibilidad en el JSON
 
+        // Agrupamos la data por sede
+        $resumenSedes = $audiencias->groupBy(function ($a) {
+            if ($a->conciliador && $a->conciliador->centro) {
+                return $a->conciliador->centro->nombre;
+            }
+            if ($a->conciliadoresAudiencias && $a->conciliadoresAudiencias->count() > 0) {
+                $ca = $a->conciliadoresAudiencias->first();
+                if ($ca && $ca->conciliador && $ca->conciliador->centro) {
+                    return $ca->conciliador->centro->nombre;
+                }
+            }
+            return 'Sede no identificada';
+        })->map(function ($audienciasDeSede, $sede) {
+            $totalDeSede = $audienciasDeSede->count();
+            
+            $resolucionesAgrupadasSede = $audienciasDeSede->groupBy(function ($a) {
+                return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
+            })->map(function ($grupo) {
+                return $grupo->count();
+            });
+
+            return [
+                'sede' => $sede,
+                'total_audiencias' => $totalDeSede,
+                'resoluciones' => $resolucionesAgrupadasSede
+            ];
+        })->values();
+
         // Para darle un valor extra al front, mandamos también un consolidado de todo el periodo sumado
         $totalGeneral = $audiencias->count();
         $resolucionesGenerales = $audiencias->groupBy(function ($a) {
@@ -226,10 +266,12 @@ class DashboardController extends Controller
             'resumen_periodo' => [
                 'fecha_inicio' => $fechaInicio,
                 'fecha_fin' => $fechaFin,
+                'centros_incluidos' => $centrosInfo,
                 'total_audiencias' => $totalGeneral,
                 'resoluciones' => $resolucionesGenerales,
             ],
-            'desglose_diario' => $resumenDiario
+            'desglose_diario' => $resumenDiario,
+            'desglose_sedes' => $resumenSedes
         ], 200, [], JSON_UNESCAPED_UNICODE);
     }
 }
