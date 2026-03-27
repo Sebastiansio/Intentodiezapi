@@ -62,23 +62,35 @@ class DashboardController extends Controller
 
         $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
         $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
+        
+        $incluirInmediatas = $request->query('incluir_inmediatas', 'true');
 
-        $audiencias = Audiencia::whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
+        $query = Audiencia::whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
             ->where(function($query) use ($id) {
                 $query->where('conciliador_id', $id)
                       ->orWhereHas('conciliadoresAudiencias', function($q) use ($id) {
                           $q->where('conciliador_id', $id);
                       });
-            })
-            ->select('id', 'expediente_id', 'resolucion_id', 'fecha_audiencia', 'hora_inicio', 'hora_fin', 'etapa_notificacion_id')
+            });
+
+        if ($incluirInmediatas === 'false' || $incluirInmediatas === '0' || $incluirInmediatas === false) {
+            $query->whereHas('expediente.solicitud', function ($q) {
+                $q->where('inmediata', false);
+            });
+        }
+
+        $audiencias = $query->select('id', 'expediente_id', 'resolucion_id', 'fecha_audiencia', 'hora_inicio', 'hora_fin', 'etapa_notificacion_id')
             ->with(['expediente:id,folio,anio,solicitud_id', 'expediente.solicitud:id,inmediata', 'salasAudiencias.sala:id,sala', 'resolucion:id,nombre', 'etapa_notificacion', 'audienciaParte.tipo_notificacion', 'audienciaParte.parte'])
             ->orderBy('fecha_audiencia')
             ->orderBy('hora_inicio')
-            ->get()
-            ->map(function($a) {
-                $sala = $a->salasAudiencias && $a->salasAudiencias->count() > 0 
-                        ? $a->salasAudiencias->first()->sala->sala 
-                        : 'Sin sala asignada';
+            ->get();
+
+        $total = $audiencias->count();
+
+        $audienciasTransformadas = $audiencias->map(function($a) {
+            $sala = $a->salasAudiencias && $a->salasAudiencias->count() > 0 
+                    ? $a->salasAudiencias->first()->sala->sala 
+                    : 'Sin sala asignada';
                 
                 $notificacionesPartes = [];
                 if ($a->audienciaParte) {
@@ -112,8 +124,13 @@ class DashboardController extends Controller
                 ];
             });
 
+        $respuesta = [
+            'total' => $total,
+            'data' => $audienciasTransformadas
+        ];
+
         // Usamos JSON_UNESCAPED_SLASHES para evitar que las barras / en el expediente se escapen con \
-        return response()->json($audiencias, 200, [], JSON_UNESCAPED_SLASHES);
+        return response()->json($respuesta, 200, [], JSON_UNESCAPED_SLASHES);
     }
 
     /**
@@ -132,6 +149,8 @@ class DashboardController extends Controller
 
         $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
         $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
+        
+        $incluirInmediatas = $request->query('incluir_inmediatas', 'true');
 
         // Traemos las audiencias para contabilizarlas
         $audienciasQuery = Audiencia::whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin]);
@@ -152,6 +171,12 @@ class DashboardController extends Controller
                       ->orWhereHas('conciliadoresAudiencias', function($q) use ($conciliadoresIdsValidos) {
                           $q->whereIn('conciliador_id', $conciliadoresIdsValidos);
                       });
+            });
+        }
+
+        if ($incluirInmediatas === 'false' || $incluirInmediatas === '0' || $incluirInmediatas === false) {
+            $audienciasQuery->whereHas('expediente.solicitud', function ($q) {
+                $q->where('inmediata', false);
             });
         }
 
@@ -221,6 +246,8 @@ class DashboardController extends Controller
 
         $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
         $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
+        
+        $incluirInmediatas = $request->query('incluir_inmediatas', 'true');
 
         // Identificar IDs de conciliadores válidos según los centros
         $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosFiltro)->pluck('id')->toArray();
@@ -228,15 +255,22 @@ class DashboardController extends Controller
         // Obtener nombres de los centros filtrados
         $centrosInfo = \App\Centro::whereIn('id', $centrosFiltro)->select('id', 'nombre')->get();
 
-        // Obtener todas las audiencias aplicando filtros y relaciones (y que NO sean de solicitud inmediata)
-        $audiencias = Audiencia::whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
+        $query = Audiencia::whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
             ->where(function($query) use ($conciliadoresIdsValidos) {
                 $query->whereIn('conciliador_id', $conciliadoresIdsValidos)
                       ->orWhereHas('conciliadoresAudiencias', function($q) use ($conciliadoresIdsValidos) {
                           $q->whereIn('conciliador_id', $conciliadoresIdsValidos);
                       });
-            })
-            ->select('id', 'fecha_audiencia', 'resolucion_id', 'conciliador_id', 'expediente_id')
+            });
+
+        if ($incluirInmediatas === 'false' || $incluirInmediatas === '0' || $incluirInmediatas === false) {
+            $query->whereHas('expediente.solicitud', function ($q) {
+                $q->where('inmediata', false);
+            });
+        }
+
+        // Obtener todas las audiencias aplicando filtros y relaciones
+        $audiencias = $query->select('id', 'fecha_audiencia', 'resolucion_id', 'conciliador_id', 'expediente_id')
             ->with(['resolucion', 'conciliador.centro', 'conciliadoresAudiencias.conciliador.centro', 'audienciaParte:id,audiencia_id,finalizado', 'expediente.solicitud:id,inmediata'])
             ->orderBy('fecha_audiencia', 'asc')
             ->get();
