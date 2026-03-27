@@ -15,7 +15,7 @@ class DashboardController extends Controller
      */
     public function getConciliadores(Request $request)
     {
-        $centrosPermitidos = [38, 48, 39]; // Filtros de centros solicitados
+        $centrosPermitidos = [38, 39, 40, 41, 42, 43, 44, 46, 47, 48]; // Filtros de centros solicitados
 
         // Tomar fechas de la petición para filtrar audiencias, por default la semana actual
         $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
@@ -51,7 +51,7 @@ class DashboardController extends Controller
      */
     public function getAudiencias(Request $request, $id)
     {
-        $centrosPermitidos = [38, 48, 39, 41];
+        $centrosPermitidos = [38, 39, 40, 41, 42, 43, 44, 46, 47, 48];
 
         // Validar que el conciliador exista y pertenezca a los centros permitidos
         $conciliadorValido = Conciliador::whereIn('centro_id', $centrosPermitidos)->find($id);
@@ -138,7 +138,7 @@ class DashboardController extends Controller
      */
     public function getEstadisticas(Request $request, $id)
     {
-        $centrosPermitidos = [38, 48, 39];
+        $centrosPermitidos = [38, 39, 40, 41, 42, 43, 44, 46, 47, 48];
 
         if ($id !== 'todos' && $id != 0) {
             $conciliadorValido = Conciliador::whereIn('centro_id', $centrosPermitidos)->find($id);
@@ -235,7 +235,7 @@ class DashboardController extends Controller
      */
     public function getResumenGeneral(Request $request)
     {
-        $centrosPermitidos = [38, 48, 39];
+        $centrosPermitidos = [38, 39, 40, 41, 42, 43, 44, 46, 47, 48];
         
         $centroIdRequest = $request->query('centro_id');
         if ($centroIdRequest && in_array($centroIdRequest, $centrosPermitidos)) {
