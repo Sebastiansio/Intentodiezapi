@@ -51,7 +51,7 @@ class DashboardController extends Controller
      */
     public function getAudiencias(Request $request, $id)
     {
-        $centrosPermitidos = [38, 48, 39];
+        $centrosPermitidos = [38, 48, 39, 41];
 
         // Validar que el conciliador exista y pertenezca a los centros permitidos
         $conciliadorValido = Conciliador::whereIn('centro_id', $centrosPermitidos)->find($id);
@@ -70,12 +70,8 @@ class DashboardController extends Controller
                           $q->where('conciliador_id', $id);
                       });
             })
-            ->whereHas('expediente.solicitud', function ($query) {
-                // Filtramos que la solicitud no sea inmediata
-                $query->where('inmediata', false);
-            })
-            ->select('id', 'expediente_id', 'resolucion_id', 'fecha_audiencia', 'hora_inicio', 'hora_fin')
-            ->with(['expediente:id,folio,anio', 'salasAudiencias.sala:id,sala', 'resolucion:id,nombre'])
+            ->select('id', 'expediente_id', 'resolucion_id', 'fecha_audiencia', 'hora_inicio', 'hora_fin', 'etapa_notificacion_id')
+            ->with(['expediente:id,folio,anio,solicitud_id', 'expediente.solicitud:id,inmediata', 'salasAudiencias.sala:id,sala', 'resolucion:id,nombre', 'etapa_notificacion', 'audienciaParte.tipo_notificacion', 'audienciaParte.parte'])
             ->orderBy('fecha_audiencia')
             ->orderBy('hora_inicio')
             ->get()
@@ -83,8 +79,25 @@ class DashboardController extends Controller
                 $sala = $a->salasAudiencias && $a->salasAudiencias->count() > 0 
                         ? $a->salasAudiencias->first()->sala->sala 
                         : 'Sin sala asignada';
+                
+                $notificacionesPartes = [];
+                if ($a->audienciaParte) {
+                    $notificacionesPartes = $a->audienciaParte->map(function ($ap) {
+                        return [
+                            'parte_id' => $ap->parte_id,
+                            'tipo_parte' => $ap->parte ? $ap->parte->tipo_parte_id : null,
+                            'tipo_notificacion' => $ap->tipo_notificacion ? $ap->tipo_notificacion->nombre : 'Sin tipo',
+                            'fecha_notificacion' => $ap->fecha_notificacion,
+                            'estatus_notificacion' => $ap->finalizado ?: 'Pendiente',
+                            'detalle_notificacion' => $ap->detalle,
+                            'multa' => (bool) $ap->multa
+                        ];
+                    })->toArray();
+                }
+
                 return [
                     'id' => $a->id,
+                    'inmediata' => $a->expediente && $a->expediente->solicitud ? (bool) $a->expediente->solicitud->inmediata : false,
                     'expediente' => $a->expediente ? $a->expediente->folio : 'Sin expediente',
                     'anio' => $a->expediente ? $a->expediente->anio : '',
                     'fecha' => $a->fecha_audiencia,
@@ -93,7 +106,9 @@ class DashboardController extends Controller
                     'sala' => $sala,
                     'estado_audiencia_id' => null, // La columna estado_audiencia_id no existe en la base de datos
                     'resolucion_id' => $a->resolucion_id,
-                    'resolucion_nombre' => $a->resolucion ? $a->resolucion->nombre : 'Sin resolución'
+                    'resolucion_nombre' => $a->resolucion ? $a->resolucion->nombre : 'Sin resolución',
+                    'etapa_notificacion' => $a->etapa_notificacion ? $a->etapa_notificacion->etapa : 'N/A',
+                    'notificaciones_partes' => $notificacionesPartes
                 ];
             });
 
@@ -140,15 +155,33 @@ class DashboardController extends Controller
             });
         }
 
-        $audiencias = $audienciasQuery->select('id', 'resolucion_id')->get();
+        $audiencias = $audienciasQuery->select('id', 'resolucion_id', 'expediente_id')
+            ->with(['audienciaParte' => function($q) {
+                $q->select('id', 'audiencia_id', 'finalizado');
+            }, 'expediente.solicitud:id,inmediata'])->get();
 
         $totalAudiencias = $audiencias->count();
+        $inmediatas = $audiencias->filter(function($a) {
+            return $a->expediente && $a->expediente->solicitud && $a->expediente->solicitud->inmediata;
+        })->count();
 
         // Contadores según las resoluciones (1: Convenio, 2 y 3: No convenio, 4: Archivado)
         $convenios = $audiencias->where('resolucion_id', 1)->count();
         $noConvenios = $audiencias->whereIn('resolucion_id', [2, 3])->count();
         $archivados = $audiencias->where('resolucion_id', 4)->count();
         $sinResolucion = $audiencias->whereNull('resolucion_id')->count();
+
+        // Estatus de notificaciones agrupados
+        $estatusNotificaciones = [];
+        foreach ($audiencias as $a) {
+            foreach ($a->audienciaParte as $ap) {
+                $status = $ap->finalizado ?: 'Pendiente';
+                if (!isset($estatusNotificaciones[$status])) {
+                    $estatusNotificaciones[$status] = 0;
+                }
+                $estatusNotificaciones[$status]++;
+            }
+        }
 
         // Calculamos la efectividad (Convenios vs total de audiencias con resolución válida para el cálculo)
         // Generalmente, la efectividad es: Convenios / (Convenios + No Convenios) o Convenios / Total General
@@ -160,11 +193,12 @@ class DashboardController extends Controller
         $efectividadReal = $totalConciliados > 0 ? round(($convenios / $totalConciliados) * 100, 2) : 0;
 
         return response()->json([
-            'total_audiencias' => $totalAudiencias,
-            'convenios' => $convenios,
+            'total_audiencias' => $totalAudiencias,            'total_audiencias_inmediatas' => $inmediatas,
+            'total_audiencias_ordinarias' => $totalAudiencias - $inmediatas,            'convenios' => $convenios,
             'no_convenios' => $noConvenios,
             'archivados' => $archivados,
             'sin_resolucion' => $sinResolucion,
+            'estatus_notificaciones' => $estatusNotificaciones,
             'porcentaje_efectividad_general' => $efectividadGeneral,
             'porcentaje_efectividad_conciliacion' => $efectividadReal
         ]);
@@ -202,17 +236,18 @@ class DashboardController extends Controller
                           $q->whereIn('conciliador_id', $conciliadoresIdsValidos);
                       });
             })
-            ->whereHas('expediente.solicitud', function ($query) {
-                $query->where('inmediata', false);
-            })
-            ->select('id', 'fecha_audiencia', 'resolucion_id', 'conciliador_id')
-            ->with(['resolucion', 'conciliador.centro', 'conciliadoresAudiencias.conciliador.centro'])
+            ->select('id', 'fecha_audiencia', 'resolucion_id', 'conciliador_id', 'expediente_id')
+            ->with(['resolucion', 'conciliador.centro', 'conciliadoresAudiencias.conciliador.centro', 'audienciaParte:id,audiencia_id,finalizado', 'expediente.solicitud:id,inmediata'])
             ->orderBy('fecha_audiencia', 'asc')
             ->get();
 
         // Agrumamos la data por día (fecha_audiencia)
         $resumenDiario = $audiencias->groupBy('fecha_audiencia')->map(function ($audienciasDelDia, $fecha) {
             $totalDelDia = $audienciasDelDia->count();
+            $inmediatasDelDia = $audienciasDelDia->filter(function($a) {
+                return $a->expediente && $a->expediente->solicitud && $a->expediente->solicitud->inmediata;
+            })->count();
+            $ordinariasDelDia = $totalDelDia - $inmediatasDelDia;
             
             // Sub-agrupamos por nombre de la resolución
             $resolucionesAgrupadas = $audienciasDelDia->groupBy(function ($a) {
@@ -221,10 +256,25 @@ class DashboardController extends Controller
                 return $grupo->count();
             });
 
+            // Sub-agrupamos estatus de notificaciones en el día
+            $notificacionesAgrupadas = [];
+            foreach ($audienciasDelDia as $a) {
+                foreach ($a->audienciaParte as $ap) {
+                    $status = $ap->finalizado ?: 'Pendiente';
+                    if (!isset($notificacionesAgrupadas[$status])) {
+                        $notificacionesAgrupadas[$status] = 0;
+                    }
+                    $notificacionesAgrupadas[$status]++;
+                }
+            }
+
             return [
                 'fecha' => $fecha,
                 'total_audiencias' => $totalDelDia,
-                'resoluciones' => $resolucionesAgrupadas
+                'total_audiencias_inmediatas' => $inmediatasDelDia,
+                'total_audiencias_ordinarias' => $ordinariasDelDia,
+                'resoluciones' => $resolucionesAgrupadas,
+                'estatus_notificaciones' => $notificacionesAgrupadas
             ];
         })->values(); // Lo hacemos array numérico para mejor legibilidad en el JSON
 
@@ -242,6 +292,10 @@ class DashboardController extends Controller
             return 'Sede no identificada';
         })->map(function ($audienciasDeSede, $sede) {
             $totalDeSede = $audienciasDeSede->count();
+            $inmediatasDeSede = $audienciasDeSede->filter(function($a) {
+                return $a->expediente && $a->expediente->solicitud && $a->expediente->solicitud->inmediata;
+            })->count();
+            $ordinariasDeSede = $totalDeSede - $inmediatasDeSede;
             
             $resolucionesAgrupadasSede = $audienciasDeSede->groupBy(function ($a) {
                 return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
@@ -249,18 +303,49 @@ class DashboardController extends Controller
                 return $grupo->count();
             });
 
+            // Sub-agrupamos estatus de notificaciones en la sede
+            $notificacionesAgrupadasSede = [];
+            foreach ($audienciasDeSede as $a) {
+                foreach ($a->audienciaParte as $ap) {
+                    $status = $ap->finalizado ?: 'Pendiente';
+                    if (!isset($notificacionesAgrupadasSede[$status])) {
+                        $notificacionesAgrupadasSede[$status] = 0;
+                    }
+                    $notificacionesAgrupadasSede[$status]++;
+                }
+            }
+
             return [
                 'sede' => $sede,
                 'total_audiencias' => $totalDeSede,
-                'resoluciones' => $resolucionesAgrupadasSede
+                'total_audiencias_inmediatas' => $inmediatasDeSede,
+                'total_audiencias_ordinarias' => $ordinariasDeSede,
+                'resoluciones' => $resolucionesAgrupadasSede,
+                'estatus_notificaciones' => $notificacionesAgrupadasSede
             ];
         })->values();
 
         // Para darle un valor extra al front, mandamos también un consolidado de todo el periodo sumado
         $totalGeneral = $audiencias->count();
+        $totalGeneralInmediatas = $audiencias->filter(function($a) {
+            return $a->expediente && $a->expediente->solicitud && $a->expediente->solicitud->inmediata;
+        })->count();
+        $totalGeneralOrdinarias = $totalGeneral - $totalGeneralInmediatas;
+
         $resolucionesGenerales = $audiencias->groupBy(function ($a) {
             return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
         })->map->count();
+
+        $estatusNotificacionesGenerales = [];
+        foreach ($audiencias as $a) {
+            foreach ($a->audienciaParte as $ap) {
+                $status = $ap->finalizado ?: 'Pendiente';
+                if (!isset($estatusNotificacionesGenerales[$status])) {
+                    $estatusNotificacionesGenerales[$status] = 0;
+                }
+                $estatusNotificacionesGenerales[$status]++;
+            }
+        }
 
         return response()->json([
             'resumen_periodo' => [
@@ -268,7 +353,10 @@ class DashboardController extends Controller
                 'fecha_fin' => $fechaFin,
                 'centros_incluidos' => $centrosInfo,
                 'total_audiencias' => $totalGeneral,
+                'total_audiencias_inmediatas' => $totalGeneralInmediatas,
+                'total_audiencias_ordinarias' => $totalGeneralOrdinarias,
                 'resoluciones' => $resolucionesGenerales,
+                'estatus_notificaciones' => $estatusNotificacionesGenerales
             ],
             'desglose_diario' => $resumenDiario,
             'desglose_sedes' => $resumenSedes
