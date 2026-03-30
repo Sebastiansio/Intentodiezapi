@@ -6,30 +6,86 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Conciliador;
 use App\Audiencia;
+use App\Centro;
 use Carbon\Carbon;
 
 class DashboardController extends Controller
 {
+    private const CENTROS_PERMITIDOS_DEFAULT = [38, 39, 40, 41, 42, 43, 44, 46, 47, 48];
+
+    /**
+     * Devuelve todos los centros disponibles para que el front configure filtros.
+     */
+    public function getCentros()
+    {
+        $centros = Centro::select('id', 'nombre')
+            ->orderBy('nombre', 'asc')
+            ->get();
+
+        return response()->json([
+            'data' => $centros,
+            'default_centros' => self::CENTROS_PERMITIDOS_DEFAULT
+        ]);
+    }
+
+    /**
+     * Resuelve los centros a usar en base a la configuración enviada por query.
+     * Acepta centros=1,2,3 o centros[]=1&centros[]=2. Mantiene compatibilidad con centro_id.
+     */
+    private function getCentrosPermitidos(Request $request)
+    {
+        $centrosRequest = $request->query('centros');
+
+        if ($centrosRequest === null || $centrosRequest === '') {
+            $centroIdRequest = $request->query('centro_id');
+            if ($centroIdRequest !== null && $centroIdRequest !== '') {
+                $centrosRequest = [$centroIdRequest];
+            }
+        }
+
+        if ($centrosRequest === null || $centrosRequest === '') {
+            return self::CENTROS_PERMITIDOS_DEFAULT;
+        }
+
+        if (is_string($centrosRequest)) {
+            $centrosRequest = explode(',', $centrosRequest);
+        }
+
+        if (!is_array($centrosRequest)) {
+            return self::CENTROS_PERMITIDOS_DEFAULT;
+        }
+
+        $centrosRequest = array_values(array_filter(array_map(function ($centroId) {
+            return (int) trim((string) $centroId);
+        }, $centrosRequest), function ($centroId) {
+            return $centroId > 0;
+        }));
+
+        if (empty($centrosRequest)) {
+            return self::CENTROS_PERMITIDOS_DEFAULT;
+        }
+
+        $centrosValidos = Centro::whereIn('id', $centrosRequest)
+            ->pluck('id')
+            ->map(function ($id) {
+                return (int) $id;
+            })
+            ->toArray();
+
+        return !empty($centrosValidos)
+            ? $centrosValidos
+            : self::CENTROS_PERMITIDOS_DEFAULT;
+    }
+
     /**
      * Obtiene todos los conciliadores con su nombre.
      */
     public function getConciliadores(Request $request)
     {
-        $centrosPermitidos = [38, 39, 40, 41, 42, 43, 44, 46, 47, 48]; // Filtros de centros solicitados
-
-        // Tomar fechas de la petición para filtrar audiencias, por default la semana actual
-        $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
-        $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
+        $centrosPermitidos = $this->getCentrosPermitidos($request);
 
         $conciliadores = Conciliador::with(['persona', 'centro'])
             ->whereIn('centro_id', $centrosPermitidos)
-            // Filtramos para traer solo conciliadores que tengan audiencias en este periodo y que no sean inmediatas
-            ->whereHas('audiencias', function ($query) use ($fechaInicio, $fechaFin) {
-                $query->whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
-                      ->whereHas('expediente.solicitud', function ($subQuery) {
-                          $subQuery->where('inmediata', false);
-                      });
-            })
             ->get()
             ->map(function($c) {
                 $nombre = $c->persona 
@@ -51,7 +107,7 @@ class DashboardController extends Controller
      */
     public function getAudiencias(Request $request, $id)
     {
-        $centrosPermitidos = [38, 39, 40, 41, 42, 43, 44, 46, 47, 48];
+        $centrosPermitidos = $this->getCentrosPermitidos($request);
 
         // Validar que el conciliador exista y pertenezca a los centros permitidos
         $conciliadorValido = Conciliador::whereIn('centro_id', $centrosPermitidos)->find($id);
@@ -138,7 +194,7 @@ class DashboardController extends Controller
      */
     public function getEstadisticas(Request $request, $id)
     {
-        $centrosPermitidos = [38, 39, 40, 41, 42, 43, 44, 46, 47, 48];
+        $centrosPermitidos = $this->getCentrosPermitidos($request);
 
         if ($id !== 'todos' && $id != 0) {
             $conciliadorValido = Conciliador::whereIn('centro_id', $centrosPermitidos)->find($id);
@@ -235,14 +291,7 @@ class DashboardController extends Controller
      */
     public function getResumenGeneral(Request $request)
     {
-        $centrosPermitidos = [38, 39, 40, 41, 42, 43, 44, 46, 47, 48];
-        
-        $centroIdRequest = $request->query('centro_id');
-        if ($centroIdRequest && in_array($centroIdRequest, $centrosPermitidos)) {
-            $centrosFiltro = [$centroIdRequest];
-        } else {
-            $centrosFiltro = $centrosPermitidos;
-        }
+        $centrosFiltro = $this->getCentrosPermitidos($request);
 
         $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
         $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
@@ -253,7 +302,7 @@ class DashboardController extends Controller
         $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosFiltro)->pluck('id')->toArray();
 
         // Obtener nombres de los centros filtrados
-        $centrosInfo = \App\Centro::whereIn('id', $centrosFiltro)->select('id', 'nombre')->get();
+        $centrosInfo = Centro::whereIn('id', $centrosFiltro)->select('id', 'nombre')->get();
 
         $query = Audiencia::whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
             ->where(function($query) use ($conciliadoresIdsValidos) {
