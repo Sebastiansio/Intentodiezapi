@@ -276,6 +276,7 @@ class AudienciasController extends Controller
                 ) AS nombre_parte1,
                 s.centro_id,
                 s.created_at,
+                s.virtual,
                 ps.curp AS curp_parte1,
                 ps.rfc AS rfc_parte1,
                 ps.nombre_comercial AS nombre_comercial_parte1,
