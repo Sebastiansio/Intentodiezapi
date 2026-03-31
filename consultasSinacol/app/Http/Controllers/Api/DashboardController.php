@@ -848,4 +848,146 @@ class DashboardController extends Controller
             'desglose_sedes' => $resumenSedes
         ], 200, [], JSON_UNESCAPED_UNICODE);
     }
+
+    /**
+     * Obtiene un ranking de efectividad de los conciliadores en las fechas establecidas.
+     * Basado en el conteo por partes citadas.
+     */
+    public function getRankingConciliadores(Request $request)
+    {
+        $centrosFiltro = $this->getCentrosPermitidos($request);
+        $conciliadoresActivos = $this->getConciliadoresActivos();
+
+        $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
+        $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
+        
+        $incluirInmediatas = $request->query('incluir_inmediatas', 'true');
+
+        // Identificar IDs de conciliadores válidos cruzando con centros permitidos
+        if ($conciliadoresActivos !== null) {
+            $conciliadoresIdsValidos = Conciliador::whereIn('id', $conciliadoresActivos)
+                ->whereIn('centro_id', $centrosFiltro)
+                ->pluck('id')
+                ->toArray();
+        } else {
+            $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosFiltro)->pluck('id')->toArray();
+        }
+
+        $query = Audiencia::whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
+            ->where(function($query) use ($conciliadoresIdsValidos) {
+                $query->whereIn('conciliador_id', $conciliadoresIdsValidos)
+                      ->orWhereHas('conciliadoresAudiencias', function($q) use ($conciliadoresIdsValidos) {
+                          $q->whereIn('conciliador_id', $conciliadoresIdsValidos);
+                      });
+            });
+
+        if ($incluirInmediatas === 'false' || $incluirInmediatas === '0' || $incluirInmediatas === false) {
+            $query->whereHas('expediente.solicitud', function ($q) {
+                $q->where('inmediata', false);
+            });
+        }
+
+        // Cargar las relaciones que necesitamos para armar el conteo
+        $audiencias = $query->select('id', 'resolucion_id', 'conciliador_id', 'expediente_id')
+            ->with([
+                'conciliador.persona', 'conciliador.centro',
+                'conciliadoresAudiencias.conciliador.persona', 'conciliadoresAudiencias.conciliador.centro',
+                'audienciaParte:id,audiencia_id,parte_id', 'audienciaParte.parte:id,tipo_parte_id',
+                'expediente.solicitud:id,inmediata'
+            ])
+            ->get();
+
+        $resultadosPorConciliador = [];
+
+        foreach ($audiencias as $a) {
+            // Contabilizar partes (citados)
+            $citadosCount = 0;
+            if ($a->audienciaParte) {
+                foreach ($a->audienciaParte as $ap) {
+                    if ($ap->parte && $ap->parte->tipo_parte_id == 2) {
+                        $citadosCount++;
+                    }
+                }
+            }
+            // Si por error no hay citados, tomamos peso 1
+            $peso = max(1, $citadosCount);
+
+            // Determinar qué conciliadores están asignados a esta audiencia
+            // Revisamos tanto el conciliador principal como los posibles adicionales
+            $conciliadoresInvolucrados = [];
+            
+            if (in_array($a->conciliador_id, $conciliadoresIdsValidos)) {
+                $conciliadoresInvolucrados[$a->conciliador_id] = $a->conciliador;
+            }
+            
+            if ($a->conciliadoresAudiencias) {
+                foreach ($a->conciliadoresAudiencias as $ca) {
+                    if (in_array($ca->conciliador_id, $conciliadoresIdsValidos)) {
+                        $conciliadoresInvolucrados[$ca->conciliador_id] = $ca->conciliador;
+                    }
+                }
+            }
+
+            foreach ($conciliadoresInvolucrados as $cId => $conciliador) {
+                // Inicializar estrucura del conciliador si no existe
+                if (!isset($resultadosPorConciliador[$cId])) {
+                    $nombrePersona = $conciliador && $conciliador->persona 
+                        ? trim($conciliador->persona->nombre . ' ' . $conciliador->persona->primer_apellido . ' ' . $conciliador->persona->segundo_apellido)
+                        : 'Sin nombre';
+                        
+                    $resultadosPorConciliador[$cId] = [
+                        'conciliador_id' => $cId,
+                        'nombre' => $nombrePersona,
+                        'centro_id' => $conciliador ? $conciliador->centro_id : null,
+                        'centro_nombre' => $conciliador && $conciliador->centro ? $conciliador->centro->nombre : 'Sin centro',
+                        'total_audiencias_implicado' => 0, // audiencias donde participó
+                        'convenios_por_parte' => 0,
+                        'no_convenios_por_parte' => 0,
+                        'archivados_por_parte' => 0,
+                        'sin_resolucion_por_parte' => 0,
+                    ];
+                }
+
+                $resultadosPorConciliador[$cId]['total_audiencias_implicado']++;
+
+                if ($a->resolucion_id == 1) {
+                    $resultadosPorConciliador[$cId]['convenios_por_parte'] += $peso;
+                } elseif (in_array($a->resolucion_id, [2, 3])) {
+                    $resultadosPorConciliador[$cId]['no_convenios_por_parte'] += $peso;
+                } elseif ($a->resolucion_id == 4) {
+                    $resultadosPorConciliador[$cId]['archivados_por_parte'] += $peso;
+                } else {
+                    $resultadosPorConciliador[$cId]['sin_resolucion_por_parte'] += $peso;
+                }
+            }
+        }
+
+        // Calcular porcentajes de efectividad y ordenarlos
+        $rankingList = collect($resultadosPorConciliador)->map(function ($item) {
+            $convenios = $item['convenios_por_parte'];
+            $noConvenios = $item['no_convenios_por_parte'];
+            
+            // Efectividad Conciliación = Convenios / (Convenios + No Convenios)
+            $totalConciliados = $convenios + $noConvenios;
+            $efectividadReal = $totalConciliados > 0 ? round(($convenios / $totalConciliados) * 100, 2) : 0;
+            
+            // Total general en ponderado por parte
+            $totalGeneralPonderado = $convenios + $noConvenios + $item['archivados_por_parte'] + $item['sin_resolucion_por_parte'];
+            
+            // Efectividad General = Convenios / Total de resolución
+            $efectividadGeneral = $totalGeneralPonderado > 0 ? round(($convenios / $totalGeneralPonderado) * 100, 2) : 0;
+
+            $item['porcentaje_efectividad_conciliacion'] = $efectividadReal;
+            $item['porcentaje_efectividad_general'] = $efectividadGeneral;
+            $item['total_partes_atendidas'] = $totalGeneralPonderado;
+            
+            return $item;
+        })->sortByDesc('porcentaje_efectividad_conciliacion')->values()->toArray();
+
+        return response()->json([
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+            'ranking' => $rankingList
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
 }

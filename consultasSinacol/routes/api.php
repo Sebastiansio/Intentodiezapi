@@ -23,6 +23,7 @@ Route::get('dashboard/conciliadores/listado', [DashboardController::class, 'getL
 Route::get('dashboard/configuracion/conciliadores', [DashboardController::class, 'obtenerConfiguracionConciliadores']);
 Route::post('dashboard/configuracion/conciliadores', [DashboardController::class, 'guardarConfiguracionConciliadores']);
 Route::get('dashboard/resumen-general', [DashboardController::class, 'getResumenGeneral']);
+Route::get('dashboard/ranking-conciliadores', [DashboardController::class, 'getRankingConciliadores']);
 Route::get('dashboard/conciliadores', [DashboardController::class, 'getConciliadores']);
 Route::get('dashboard/conciliadores/{id}/audiencias', [DashboardController::class, 'getAudiencias']);
 Route::get('dashboard/conciliadores/{id}/estadisticas', [DashboardController::class, 'getEstadisticas']);
