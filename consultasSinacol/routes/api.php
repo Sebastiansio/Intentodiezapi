@@ -24,7 +24,11 @@ Route::get('dashboard/configuracion/conciliadores', [DashboardController::class,
 Route::post('dashboard/configuracion/conciliadores', [DashboardController::class, 'guardarConfiguracionConciliadores']);
 Route::get('dashboard/resumen-general', [DashboardController::class, 'getResumenGeneral']);
 Route::get('dashboard/ranking-conciliadores', [DashboardController::class, 'getRankingConciliadores']);
+Route::get('dashboard/motivos-no-convenio', [DashboardController::class, 'getMotivosNoConvenio']);
+Route::get('dashboard/historico-mensual', [DashboardController::class, 'getHistoricoMensual']);
+Route::get('dashboard/impacto-economico', [DashboardController::class, 'getImpactoEconomico']);
 Route::get('dashboard/conciliadores', [DashboardController::class, 'getConciliadores']);
+Route::get('dashboard/conciliadores/{id}/agenda-dia', [DashboardController::class, 'getAgendaDia']);
 Route::get('dashboard/conciliadores/{id}/audiencias', [DashboardController::class, 'getAudiencias']);
 Route::get('dashboard/conciliadores/{id}/estadisticas', [DashboardController::class, 'getEstadisticas']);
 

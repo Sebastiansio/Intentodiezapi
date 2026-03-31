@@ -1022,4 +1022,254 @@ class DashboardController extends Controller
             'ranking' => $rankingList
         ], 200, [], JSON_UNESCAPED_UNICODE);
     }
+
+    /**
+     * Agenda diaria de un conciliador (Tablero Operativo).
+     */
+    public function getAgendaDia(Request $request, $id)
+    {
+        $centrosPermitidos = $this->getCentrosPermitidos($request);
+        $conciliadoresActivos = $this->getConciliadoresActivos();
+
+        if ($conciliadoresActivos !== null) {
+            $conciliadorValido = Conciliador::whereIn('id', $conciliadoresActivos)->find($id);
+        } else {
+            $conciliadorValido = Conciliador::whereIn('centro_id', $centrosPermitidos)->find($id);
+        }
+
+        if (!$conciliadorValido) {
+            return response()->json(['error' => 'Conciliador no encontrado o no tiene permisos'], 404);
+        }
+
+        $fecha = $request->query('fecha', Carbon::now()->toDateString());
+
+        $audiencias = Audiencia::whereDate('fecha_audiencia', $fecha)
+            ->where(function($query) use ($id) {
+                $query->where('conciliador_id', $id)
+                      ->orWhereHas('conciliadoresAudiencias', function($q) use ($id) {
+                          $q->where('conciliador_id', $id);
+                      });
+            })
+            ->select('id', 'expediente_id', 'resolucion_id', 'fecha_audiencia', 'hora_inicio', 'hora_fin')
+            ->with([
+                'expediente:id,folio,anio,solicitud_id', 
+                'expediente.solicitud:id,inmediata', 
+                'salasAudiencias.sala:id,sala', 
+                'resolucion:id,nombre',
+                'audienciaParte.parte:id,tipo_parte_id,nombre,primer_apellido,segundo_apellido'
+            ])
+            ->orderBy('hora_inicio')
+            ->get();
+
+        $agenda = $audiencias->map(function($a) {
+            $sala = $a->salasAudiencias && $a->salasAudiencias->count() > 0 
+                ? $a->salasAudiencias->first()->sala->sala 
+                : 'Sin sala asignada';
+            
+            $partesInvolucradas = [];
+            if ($a->audienciaParte) {
+                $partesInvolucradas = $a->audienciaParte->map(function ($ap) {
+                    $tipo = '';
+                    if ($ap->parte) {
+                        if ($ap->parte->tipo_parte_id == 1) $tipo = 'Solicitante';
+                        elseif ($ap->parte->tipo_parte_id == 2) $tipo = 'Citado';
+                        else $tipo = 'Otro';
+                        
+                        $nombreParte = trim(($ap->parte->nombre ?? '') . ' ' . ($ap->parte->primer_apellido ?? '') . ' ' . ($ap->parte->segundo_apellido ?? ''));
+                        return [
+                            'tipo' => $tipo,
+                            'nombre' => $nombreParte
+                        ];
+                    }
+                    return null;
+                })->filter()->values()->toArray();
+            }
+
+            return [
+                'id' => $a->id,
+                'hora_inicio' => $a->hora_inicio,
+                'hora_fin' => $a->hora_fin,
+                'expediente' => $a->expediente ? $a->expediente->folio . '/' . $a->expediente->anio : 'Sin expediente',
+                'inmediata' => $a->expediente && $a->expediente->solicitud ? (bool) $a->expediente->solicitud->inmediata : false,
+                'sala' => $sala,
+                'estado_actual' => $a->resolucion ? $a->resolucion->nombre : 'Pendiente o Sin resolución',
+                'partes' => $partesInvolucradas
+            ];
+        });
+
+        return response()->json([
+            'fecha' => $fecha,
+            'total_audiencias' => $audiencias->count(),
+            'agenda' => $agenda
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Motivos de No Convenio (Tablero de Coordinadores).
+     */
+    public function getMotivosNoConvenio(Request $request)
+    {
+        $centrosFiltro = $this->getCentrosPermitidos($request);
+        $conciliadoresActivos = $this->getConciliadoresActivos();
+
+        $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
+        $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
+
+        if ($conciliadoresActivos !== null) {
+            $conciliadoresIdsValidos = Conciliador::whereIn('id', $conciliadoresActivos)
+                ->whereIn('centro_id', $centrosFiltro)
+                ->pluck('id')
+                ->toArray();
+        } else {
+            $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosFiltro)->pluck('id')->toArray();
+        }
+
+        $audiencias = Audiencia::whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
+            ->where(function($query) use ($conciliadoresIdsValidos) {
+                $query->whereIn('conciliador_id', $conciliadoresIdsValidos)
+                      ->orWhereHas('conciliadoresAudiencias', function($q) use ($conciliadoresIdsValidos) {
+                          $q->whereIn('conciliador_id', $conciliadoresIdsValidos);
+                      });
+            })
+            ->whereIn('resolucion_id', [2, 3]) // Solo las de no convenio
+            ->select('id', 'tipo_terminacion_audiencia_id')
+            ->with('tipoTerminacion')
+            ->get();
+
+        $motivos = $audiencias->groupBy('tipo_terminacion_audiencia_id')->map(function ($grupo) {
+            $primerElemento = $grupo->first();
+            $nombreMotivo = $primerElemento->tipoTerminacion ? $primerElemento->tipoTerminacion->nombre : 'Motivo no especificado (o sin tipo_terminacion)';
+            return [
+                'motivo' => $nombreMotivo,
+                'cantidad' => $grupo->count()
+            ];
+        })->values()->sortByDesc('cantidad')->values();
+
+        return response()->json([
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+            'total_no_convenios' => $audiencias->count(),
+            'motivos' => $motivos
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Histórico Anual Agrupado por Mes (Tablero Nivel Dirección).
+     */
+    public function getHistoricoMensual(Request $request)
+    {
+        $centrosFiltro = $this->getCentrosPermitidos($request);
+        $conciliadoresActivos = $this->getConciliadoresActivos();
+
+        $anio = $request->query('anio', Carbon::now()->year);
+        
+        if ($conciliadoresActivos !== null) {
+            $conciliadoresIdsValidos = Conciliador::whereIn('id', $conciliadoresActivos)
+                ->whereIn('centro_id', $centrosFiltro)
+                ->pluck('id')
+                ->toArray();
+        } else {
+            $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosFiltro)->pluck('id')->toArray();
+        }
+
+        $audiencias = Audiencia::whereYear('fecha_audiencia', $anio)
+            ->where(function($query) use ($conciliadoresIdsValidos) {
+                $query->whereIn('conciliador_id', $conciliadoresIdsValidos)
+                      ->orWhereHas('conciliadoresAudiencias', function($q) use ($conciliadoresIdsValidos) {
+                          $q->whereIn('conciliador_id', $conciliadoresIdsValidos);
+                      });
+            })
+            ->select('id', 'fecha_audiencia', 'resolucion_id')
+            ->get();
+
+        $historico = $audiencias->groupBy(function($a) {
+            // ej. 2024-01, 2024-02
+            return Carbon::parse($a->fecha_audiencia)->format('Y-m'); 
+        })->map(function($mesAudiencias, $mes) {
+            $convenios = $mesAudiencias->where('resolucion_id', 1)->count();
+            $noConvenios = $mesAudiencias->whereIn('resolucion_id', [2, 3])->count();
+            $archivadas = $mesAudiencias->where('resolucion_id', 4)->count();
+            $total = $mesAudiencias->count();
+
+            return [
+                'mes' => $mes,
+                'total_audiencias' => $total,
+                'convenios' => $convenios,
+                'no_convenios' => $noConvenios,
+                'archivadas' => $archivadas,
+                'efectividad_porcentaje' => $total > 0 ? round(($convenios / $total) * 100, 2) : 0
+            ];
+        })->values()->sortBy('mes')->values();
+
+        return response()->json([
+            'anio' => $anio,
+            'historico' => $historico
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Impacto Económico Acumulado (Tablero Nivel Dirección).
+     */
+    public function getImpactoEconomico(Request $request)
+    {
+        $centrosFiltro = $this->getCentrosPermitidos($request);
+        $conciliadoresActivos = $this->getConciliadoresActivos();
+
+        $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfMonth()->toDateString());
+        $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfMonth()->toDateString());
+
+        if ($conciliadoresActivos !== null) {
+            $conciliadoresIdsValidos = Conciliador::whereIn('id', $conciliadoresActivos)
+                ->whereIn('centro_id', $centrosFiltro)
+                ->pluck('id')
+                ->toArray();
+        } else {
+            $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosFiltro)->pluck('id')->toArray();
+        }
+
+        $audiencias = Audiencia::whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
+            ->where('resolucion_id', 1) 
+            ->where(function($query) use ($conciliadoresIdsValidos) {
+                $query->whereIn('conciliador_id', $conciliadoresIdsValidos)
+                      ->orWhereHas('conciliadoresAudiencias', function($q) use ($conciliadoresIdsValidos) {
+                          $q->whereIn('conciliador_id', $conciliadoresIdsValidos);
+                      });
+            })
+            ->select('id', 'resolucion_id', 'conciliador_id')
+            ->with([
+                'resolucionPartes.parteConceptos:id,resolucion_partes_id,monto'
+            ])
+            ->get();
+
+        $impactoTotal = 0;
+        $conveniosConMonto = 0;
+
+        foreach ($audiencias as $a) {
+            $montoAudiencia = 0;
+            if ($a->resolucionPartes) {
+                foreach ($a->resolucionPartes as $rp) {
+                    if ($rp->parteConceptos) {
+                        foreach ($rp->parteConceptos as $rpc) {
+                            if (is_numeric($rpc->monto)) {
+                                $montoAudiencia += (float)$rpc->monto;
+                            }
+                        }
+                    }
+                }
+            }
+            if ($montoAudiencia > 0) {
+                $impactoTotal += $montoAudiencia;
+                $conveniosConMonto++;
+            }
+        }
+
+        return response()->json([
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+            'total_convenios' => $audiencias->count(),
+            'convenios_con_monto_registrado' => $conveniosConMonto,
+            'monto_total_recuperado' => $impactoTotal,
+            'mensaje_director' => "Se han recuperado $" . number_format($impactoTotal, 2) . " MXN en convenios este periodo."
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
 }
