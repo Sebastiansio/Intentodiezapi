@@ -513,9 +513,12 @@ class DashboardController extends Controller
                       });
             });
         } else {
-            // Para 'todos', usar conciliadores configurados si existen, si no usar todos del centro
+            // Para 'todos', usar conciliadores configurados si existen, cruzando con centros permitidos
             if ($conciliadoresActivos !== null) {
-                $conciliadoresIdsValidos = $conciliadoresActivos;
+                $conciliadoresIdsValidos = Conciliador::whereIn('id', $conciliadoresActivos)
+                    ->whereIn('centro_id', $centrosPermitidos)
+                    ->pluck('id')
+                    ->toArray();
             } else {
                 $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosPermitidos)->pluck('id')->toArray();
             }
@@ -599,9 +602,12 @@ class DashboardController extends Controller
         
         $incluirInmediatas = $request->query('incluir_inmediatas', 'true');
 
-        // Identificar IDs de conciliadores válidos
+        // Identificar IDs de conciliadores válidos cruzando con los centros solicitados
         if ($conciliadoresActivos !== null) {
-            $conciliadoresIdsValidos = $conciliadoresActivos;
+            $conciliadoresIdsValidos = Conciliador::whereIn('id', $conciliadoresActivos)
+                ->whereIn('centro_id', $centrosFiltro)
+                ->pluck('id')
+                ->toArray();
         } else {
             $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosFiltro)->pluck('id')->toArray();
         }
