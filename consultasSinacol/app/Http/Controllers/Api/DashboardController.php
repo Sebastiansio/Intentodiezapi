@@ -537,7 +537,7 @@ class DashboardController extends Controller
             });
         }
 
-        $audiencias = $audienciasQuery->select('id', 'resolucion_id', 'expediente_id')
+        $audiencias = $audienciasQuery->select('id', 'resolucion_id', 'expediente_id', 'tipo_terminacion_audiencia_id')
             ->with(['audienciaParte' => function($q) {
                 $q->select('id', 'audiencia_id', 'finalizado', 'parte_id');
             }, 'audienciaParte.parte:id,tipo_parte_id', 'expediente.solicitud:id,inmediata'])->get();
@@ -549,13 +549,15 @@ class DashboardController extends Controller
 
         // Contadores según las resoluciones por expediente (original)
         $convenios = $audiencias->where('resolucion_id', 1)->count();
-        $noConvenios = $audiencias->whereIn('resolucion_id', [2, 3])->count();
+        $noConvenios = $audiencias->whereIn('resolucion_id', [2, 3])->where('tipo_terminacion_audiencia_id', '!=', 3)->count();
+        $noConveniosIncomparecencia = $audiencias->whereIn('resolucion_id', [2, 3])->where('tipo_terminacion_audiencia_id', 3)->count();
         $archivados = $audiencias->where('resolucion_id', 4)->count();
         $sinResolucion = $audiencias->whereNull('resolucion_id')->count();
 
         // Contadores de resoluciones por parte (citados, usando tipo_parte_id = 2)
         $convenios_por_parte = 0;
         $no_convenios_por_parte = 0;
+        $no_convenios_incomparecencia_por_parte = 0;
         $archivados_por_parte = 0;
         $sin_resolucion_por_parte = 0;
 
@@ -574,7 +576,11 @@ class DashboardController extends Controller
             if ($a->resolucion_id == 1) {
                 $convenios_por_parte += $peso;
             } elseif (in_array($a->resolucion_id, [2, 3])) {
-                $no_convenios_por_parte += $peso;
+                if ($a->tipo_terminacion_audiencia_id == 3) {
+                    $no_convenios_incomparecencia_por_parte += $peso;
+                } else {
+                    $no_convenios_por_parte += $peso;
+                }
             } elseif ($a->resolucion_id == 4) {
                 $archivados_por_parte += $peso;
             } else {
@@ -600,7 +606,7 @@ class DashboardController extends Controller
         $efectividadGeneral = $totalAudiencias > 0 ? round(($convenios / $totalAudiencias) * 100, 2) : 0;
         
         // Alternativamente: Efectividad de Conciliación (descartando sin resolución y archivados)
-        $totalConciliados = $convenios + $noConvenios;
+        $totalConciliados = $convenios + $noConvenios + $noConveniosIncomparecencia;
         $efectividadReal = $totalConciliados > 0 ? round(($convenios / $totalConciliados) * 100, 2) : 0;
 
         return response()->json([
@@ -611,12 +617,14 @@ class DashboardController extends Controller
             // Conteo por expediente
             'convenios' => $convenios,
             'no_convenios' => $noConvenios,
+            'no_convenios_incomparecencia' => $noConveniosIncomparecencia,
             'archivados' => $archivados,
             'sin_resolucion' => $sinResolucion,
             
             // Conteo por parte (citados referenciados en audiencia)
             'convenios_por_parte' => $convenios_por_parte,
             'no_convenios_por_parte' => $no_convenios_por_parte,
+            'no_convenios_incomparecencia_por_parte' => $no_convenios_incomparecencia_por_parte,
             'archivados_por_parte' => $archivados_por_parte,
             'sin_resolucion_por_parte' => $sin_resolucion_por_parte,
 
@@ -668,7 +676,7 @@ class DashboardController extends Controller
         }
 
         // Obtener todas las audiencias aplicando filtros y relaciones
-        $audiencias = $query->select('id', 'fecha_audiencia', 'resolucion_id', 'conciliador_id', 'expediente_id')
+        $audiencias = $query->select('id', 'fecha_audiencia', 'resolucion_id', 'conciliador_id', 'expediente_id', 'tipo_terminacion_audiencia_id')
             ->with(['resolucion', 'conciliador.centro', 'conciliadoresAudiencias.conciliador.centro', 'audienciaParte:id,audiencia_id,finalizado,parte_id', 'audienciaParte.parte:id,tipo_parte_id', 'expediente.solicitud:id,inmediata'])
             ->orderBy('fecha_audiencia', 'asc')
             ->get();
@@ -683,6 +691,9 @@ class DashboardController extends Controller
             
             // Sub-agrupamos por nombre de la resolución (conteo por expediente)
             $resolucionesAgrupadas = $audienciasDelDia->groupBy(function ($a) {
+                if (in_array($a->resolucion_id, [2, 3]) && $a->tipo_terminacion_audiencia_id == 3) {
+                    return 'No hubo convenio por incomparecencia';
+                }
                 return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
             })->map(function ($grupo) {
                 return $grupo->count();
@@ -690,6 +701,9 @@ class DashboardController extends Controller
 
             // Sub-agrupamos por parte (conteo por citados en la audiencia)
             $resolucionesAgrupadasPorParte = $audienciasDelDia->groupBy(function ($a) {
+                if (in_array($a->resolucion_id, [2, 3]) && $a->tipo_terminacion_audiencia_id == 3) {
+                    return 'No hubo convenio por incomparecencia';
+                }
                 return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
             })->map(function ($grupo) {
                 return $grupo->sum(function($a) {
@@ -749,6 +763,9 @@ class DashboardController extends Controller
             
             // Sub-agrupamos por nombre de la resolución (conteo por expediente)
             $resolucionesAgrupadasSede = $audienciasDeSede->groupBy(function ($a) {
+                if (in_array($a->resolucion_id, [2, 3]) && $a->tipo_terminacion_audiencia_id == 3) {
+                    return 'No hubo convenio por incomparecencia';
+                }
                 return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
             })->map(function ($grupo) {
                 return $grupo->count();
@@ -756,6 +773,9 @@ class DashboardController extends Controller
 
             // Sub-agrupamos por parte (conteo por citados)
             $resolucionesAgrupadasSedePorParte = $audienciasDeSede->groupBy(function ($a) {
+                if (in_array($a->resolucion_id, [2, 3]) && $a->tipo_terminacion_audiencia_id == 3) {
+                    return 'No hubo convenio por incomparecencia';
+                }
                 return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
             })->map(function ($grupo) {
                 return $grupo->sum(function($a) {
@@ -802,10 +822,16 @@ class DashboardController extends Controller
         $totalGeneralOrdinarias = $totalGeneral - $totalGeneralInmediatas;
 
         $resolucionesGenerales = $audiencias->groupBy(function ($a) {
+            if (in_array($a->resolucion_id, [2, 3]) && $a->tipo_terminacion_audiencia_id == 3) {
+                return 'No hubo convenio por incomparecencia';
+            }
             return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
         })->map->count();
 
         $resolucionesGeneralesPorParte = $audiencias->groupBy(function ($a) {
+            if (in_array($a->resolucion_id, [2, 3]) && $a->tipo_terminacion_audiencia_id == 3) {
+                return 'No hubo convenio por incomparecencia';
+            }
             return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
         })->map(function ($grupo) {
             return $grupo->sum(function($a) {
@@ -888,7 +914,7 @@ class DashboardController extends Controller
         }
 
         // Cargar las relaciones que necesitamos para armar el conteo
-        $audiencias = $query->select('id', 'resolucion_id', 'conciliador_id', 'expediente_id')
+        $audiencias = $query->select('id', 'resolucion_id', 'conciliador_id', 'expediente_id', 'tipo_terminacion_audiencia_id')
             ->with([
                 'conciliador.persona', 'conciliador.centro',
                 'conciliadoresAudiencias.conciliador.persona', 'conciliadoresAudiencias.conciliador.centro',
@@ -943,6 +969,7 @@ class DashboardController extends Controller
                         'total_audiencias_implicado' => 0, // audiencias donde participó
                         'convenios_por_parte' => 0,
                         'no_convenios_por_parte' => 0,
+                        'no_convenios_incomparecencia_por_parte' => 0,
                         'archivados_por_parte' => 0,
                         'sin_resolucion_por_parte' => 0,
                     ];
@@ -953,7 +980,11 @@ class DashboardController extends Controller
                 if ($a->resolucion_id == 1) {
                     $resultadosPorConciliador[$cId]['convenios_por_parte'] += $peso;
                 } elseif (in_array($a->resolucion_id, [2, 3])) {
-                    $resultadosPorConciliador[$cId]['no_convenios_por_parte'] += $peso;
+                    if ($a->tipo_terminacion_audiencia_id == 3) {
+                        $resultadosPorConciliador[$cId]['no_convenios_incomparecencia_por_parte'] += $peso;
+                    } else {
+                        $resultadosPorConciliador[$cId]['no_convenios_por_parte'] += $peso;
+                    }
                 } elseif ($a->resolucion_id == 4) {
                     $resultadosPorConciliador[$cId]['archivados_por_parte'] += $peso;
                 } else {
@@ -966,13 +997,14 @@ class DashboardController extends Controller
         $rankingList = collect($resultadosPorConciliador)->map(function ($item) {
             $convenios = $item['convenios_por_parte'];
             $noConvenios = $item['no_convenios_por_parte'];
+            $noConveniosIncomp = $item['no_convenios_incomparecencia_por_parte'];
             
-            // Efectividad Conciliación = Convenios / (Convenios + No Convenios)
-            $totalConciliados = $convenios + $noConvenios;
+            // Efectividad Conciliación = Convenios / (Convenios + No Convenios + No Convenios Incomparecencia)
+            $totalConciliados = $convenios + $noConvenios + $noConveniosIncomp;
             $efectividadReal = $totalConciliados > 0 ? round(($convenios / $totalConciliados) * 100, 2) : 0;
             
             // Total general en ponderado por parte
-            $totalGeneralPonderado = $convenios + $noConvenios + $item['archivados_por_parte'] + $item['sin_resolucion_por_parte'];
+            $totalGeneralPonderado = $convenios + $noConvenios + $noConveniosIncomp + $item['archivados_por_parte'] + $item['sin_resolucion_por_parte'];
             
             // Efectividad General = Convenios / Total de resolución
             $efectividadGeneral = $totalGeneralPonderado > 0 ? round(($convenios / $totalGeneralPonderado) * 100, 2) : 0;
