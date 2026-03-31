@@ -19,6 +19,22 @@ class DashboardController extends Controller
 
     private const CONFIG_VALUE_CANDIDATES = ['valor', 'value', 'dato', 'contenido'];
 
+    private function getConfiguracionExistingColumns($candidates)
+    {
+        if (!Schema::hasTable('configuraciones')) {
+            return [];
+        }
+
+        $existingColumns = [];
+        foreach ($candidates as $column) {
+            if (Schema::hasColumn('configuraciones', $column)) {
+                $existingColumns[] = $column;
+            }
+        }
+
+        return $existingColumns;
+    }
+
     private function getConfiguracionKeyColumn()
     {
         if (!Schema::hasTable('configuraciones')) {
@@ -55,8 +71,21 @@ class DashboardController extends Controller
             return null;
         }
 
-        $keyColumn = $this->getConfiguracionKeyColumn();
-        return Configuracion::where($keyColumn, $codigo)->first();
+        $keyColumns = $this->getConfiguracionExistingColumns(self::CONFIG_KEY_CANDIDATES);
+        if (empty($keyColumns)) {
+            return null;
+        }
+
+        $query = Configuracion::query();
+        foreach ($keyColumns as $index => $column) {
+            if ($index === 0) {
+                $query->where($column, $codigo);
+            } else {
+                $query->orWhere($column, $codigo);
+            }
+        }
+
+        return $query->first();
     }
 
     private function saveConfiguracionPorCodigo($codigo, $valor)
@@ -65,21 +94,37 @@ class DashboardController extends Controller
             return null;
         }
 
-        $keyColumn = $this->getConfiguracionKeyColumn();
+        $keyColumns = $this->getConfiguracionExistingColumns(self::CONFIG_KEY_CANDIDATES);
+        if (empty($keyColumns)) {
+            return null;
+        }
+
+        $keyColumn = $keyColumns[0];
         $valueColumn = $this->getConfiguracionValueColumn();
 
-        $registro = Configuracion::where($keyColumn, $codigo)->first();
+        $registro = $this->getConfiguracionPorCodigo($codigo);
 
         if ($registro) {
+            foreach ($keyColumns as $column) {
+                if (empty($registro->{$column})) {
+                    $registro->{$column} = $codigo;
+                }
+            }
             $registro->{$valueColumn} = $valor;
             $registro->save();
             return $registro;
         }
 
-        return Configuracion::create([
+        $payload = [
             $keyColumn => $codigo,
             $valueColumn => $valor,
-        ]);
+        ];
+
+        foreach ($keyColumns as $column) {
+            $payload[$column] = $codigo;
+        }
+
+        return Configuracion::create($payload);
     }
 
     private function getConfiguracionValor($configuracion)
