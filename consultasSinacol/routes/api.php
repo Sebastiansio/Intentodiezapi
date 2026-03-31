@@ -18,7 +18,7 @@ use App\Http\Controllers\Api\DashboardController;
 */
 
 // Rutas de Dashboard para conciliadores y sus audiencias
-    Route::get('dashboard/centros', [DashboardController::class, 'getCentros']);
+Route::get('dashboard/centros', [DashboardController::class, 'getCentros']);
 Route::get('dashboard/conciliadores/listado', [DashboardController::class, 'getListaConciliadores']);
 Route::get('dashboard/configuracion/conciliadores', [DashboardController::class, 'obtenerConfiguracionConciliadores']);
 Route::post('dashboard/configuracion/conciliadores', [DashboardController::class, 'guardarConfiguracionConciliadores']);

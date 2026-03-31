@@ -7,11 +7,90 @@ use Illuminate\Http\Request;
 use App\Conciliador;
 use App\Audiencia;
 use App\Centro;
+use App\Configuracion;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Schema;
 
 class DashboardController extends Controller
 {
     private const CENTROS_PERMITIDOS_DEFAULT = [38, 39, 40, 41, 42, 43, 44, 46, 47, 48];
+
+    private const CONFIG_KEY_CANDIDATES = ['clave', 'codigo', 'nombre', 'parametro', 'key'];
+
+    private const CONFIG_VALUE_CANDIDATES = ['valor', 'value', 'dato', 'contenido'];
+
+    private function getConfiguracionKeyColumn()
+    {
+        if (!Schema::hasTable('configuraciones')) {
+            return 'codigo';
+        }
+
+        foreach (self::CONFIG_KEY_CANDIDATES as $column) {
+            if (Schema::hasColumn('configuraciones', $column)) {
+                return $column;
+            }
+        }
+
+        return 'codigo';
+    }
+
+    private function getConfiguracionValueColumn()
+    {
+        if (!Schema::hasTable('configuraciones')) {
+            return 'valor';
+        }
+
+        foreach (self::CONFIG_VALUE_CANDIDATES as $column) {
+            if (Schema::hasColumn('configuraciones', $column)) {
+                return $column;
+            }
+        }
+
+        return 'valor';
+    }
+
+    private function getConfiguracionPorCodigo($codigo)
+    {
+        if (!Schema::hasTable('configuraciones')) {
+            return null;
+        }
+
+        $keyColumn = $this->getConfiguracionKeyColumn();
+        return Configuracion::where($keyColumn, $codigo)->first();
+    }
+
+    private function saveConfiguracionPorCodigo($codigo, $valor)
+    {
+        if (!Schema::hasTable('configuraciones')) {
+            return null;
+        }
+
+        $keyColumn = $this->getConfiguracionKeyColumn();
+        $valueColumn = $this->getConfiguracionValueColumn();
+
+        $registro = Configuracion::where($keyColumn, $codigo)->first();
+
+        if ($registro) {
+            $registro->{$valueColumn} = $valor;
+            $registro->save();
+            return $registro;
+        }
+
+        return Configuracion::create([
+            $keyColumn => $codigo,
+            $valueColumn => $valor,
+        ]);
+    }
+
+    private function getConfiguracionValor($configuracion)
+    {
+        if (!$configuracion) {
+            return null;
+        }
+
+        $valueColumn = $this->getConfiguracionValueColumn();
+        return $configuracion->{$valueColumn} ?? null;
+    }
 
     /**
      * Devuelve todos los centros disponibles para que el front configure filtros.
@@ -53,10 +132,9 @@ class DashboardController extends Controller
             });
 
         // Obtener configuración actual si existe
-        $configuracion = \App\Configuracion::where('clave', 'conciliadores_activos')->first();
-        $conciliadoresActivos = $configuracion && $configuracion->valor
-            ? json_decode($configuracion->valor, true)
-            : [];
+        $configuracion = $this->getConfiguracionPorCodigo('conciliadores_activos');
+        $valor = $this->getConfiguracionValor($configuracion);
+        $conciliadoresActivos = $valor ? json_decode($valor, true) : [];
 
         return response()->json([
             'data' => $conciliadores,
@@ -102,10 +180,7 @@ class DashboardController extends Controller
             ], 400);
         }
 
-        $configuracion = \App\Configuracion::updateOrCreate(
-            ['clave' => 'conciliadores_activos'],
-            ['valor' => json_encode($conciliadoresValidos)]
-        );
+        $this->saveConfiguracionPorCodigo('conciliadores_activos', json_encode($conciliadoresValidos));
 
         return response()->json([
             'mensaje' => 'Configuración guardada exitosamente',
@@ -118,10 +193,9 @@ class DashboardController extends Controller
      */
     public function obtenerConfiguracionConciliadores()
     {
-        $configuracion = \App\Configuracion::where('clave', 'conciliadores_activos')->first();
-        $conciliadoresActivos = $configuracion && $configuracion->valor
-            ? json_decode($configuracion->valor, true)
-            : [];
+        $configuracion = $this->getConfiguracionPorCodigo('conciliadores_activos');
+        $valor = $this->getConfiguracionValor($configuracion);
+        $conciliadoresActivos = $valor ? json_decode($valor, true) : [];
 
         $conciliadoresData = [];
         if (!empty($conciliadoresActivos)) {
@@ -154,13 +228,24 @@ class DashboardController extends Controller
      */
     private function getConciliadoresActivos()
     {
-        $configuracion = \App\Configuracion::where('clave', 'conciliadores_activos')->first();
-        
-        if (!$configuracion || !$configuracion->valor) {
+        $configuracion = $this->getConfiguracionPorCodigo('conciliadores_activos');
+        $valor = $this->getConfiguracionValor($configuracion);
+
+        if (!$configuracion || !$valor) {
             return null; // Sin configuración, usar lógica original
         }
 
-        $conciliadoresActivos = json_decode($configuracion->valor, true);
+        $conciliadoresActivos = json_decode($valor, true);
+        if (!is_array($conciliadoresActivos)) {
+            return null;
+        }
+
+        $conciliadoresActivos = array_values(array_filter(array_map(function ($id) {
+            return (int) $id;
+        }, $conciliadoresActivos), function ($id) {
+            return $id > 0;
+        }));
+
         return !empty($conciliadoresActivos) ? $conciliadoresActivos : null;
     }
 
