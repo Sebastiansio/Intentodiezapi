@@ -29,6 +29,142 @@ class DashboardController extends Controller
     }
 
     /**
+     * Lista todos los conciliadores disponibles para que el front configure filtros.
+     * Opcionalmente filtra por centros solicitados.
+     */
+    public function getListaConciliadores(Request $request)
+    {
+        $centrosPermitidos = $this->getCentrosPermitidos($request);
+
+        $conciliadores = Conciliador::with(['persona', 'centro'])
+            ->whereIn('centro_id', $centrosPermitidos)
+            ->orderBy('centro_id')
+            ->get()
+            ->map(function($c) {
+                $nombre = $c->persona 
+                          ? trim($c->persona->nombre . ' ' . $c->persona->primer_apellido . ' ' . $c->persona->segundo_apellido)
+                          : 'Sin nombre';
+                return [
+                    'id' => $c->id,
+                    'nombre' => $nombre,
+                    'centro_id' => $c->centro_id,
+                    'centro_nombre' => $c->centro ? $c->centro->nombre : 'Sin centro'
+                ];
+            });
+
+        // Obtener configuración actual si existe
+        $configuracion = \App\Configuracion::where('clave', 'conciliadores_activos')->first();
+        $conciliadoresActivos = $configuracion && $configuracion->valor
+            ? json_decode($configuracion->valor, true)
+            : [];
+
+        return response()->json([
+            'data' => $conciliadores,
+            'configuracion_actual' => $conciliadoresActivos,
+            'total_disponibles' => $conciliadores->count()
+        ]);
+    }
+
+    /**
+     * Guarda la configuración de conciliadores activos.
+     */
+    public function guardarConfiguracionConciliadores(Request $request)
+    {
+        $conciliadoresIds = $request->input('conciliadores', []);
+
+        if (!is_array($conciliadoresIds)) {
+            return response()->json(['error' => 'conciliadores debe ser un arreglo'], 400);
+        }
+
+        // Validar que los IDs existan
+        $conciliadoresIds = array_values(array_filter(array_map(function ($id) {
+            return (int) trim((string) $id);
+        }, $conciliadoresIds), function ($id) {
+            return $id > 0;
+        }));
+
+        if (empty($conciliadoresIds)) {
+            return response()->json(['error' => 'Debe proporcionar al menos un conciliador'], 400);
+        }
+
+        $conciliadoresValidos = Conciliador::whereIn('id', $conciliadoresIds)
+            ->pluck('id')
+            ->map(function ($id) {
+                return (int) $id;
+            })
+            ->toArray();
+
+        if (count($conciliadoresValidos) !== count($conciliadoresIds)) {
+            return response()->json([
+                'error' => 'Algunos conciliadores no existen',
+                'válidos' => $conciliadoresValidos,
+                'solicitados' => $conciliadoresIds
+            ], 400);
+        }
+
+        $configuracion = \App\Configuracion::updateOrCreate(
+            ['clave' => 'conciliadores_activos'],
+            ['valor' => json_encode($conciliadoresValidos)]
+        );
+
+        return response()->json([
+            'mensaje' => 'Configuración guardada exitosamente',
+            'conciliadores_activos' => $conciliadoresValidos
+        ]);
+    }
+
+    /**
+     * Obtiene la configuración actual de conciliadores activos.
+     */
+    public function obtenerConfiguracionConciliadores()
+    {
+        $configuracion = \App\Configuracion::where('clave', 'conciliadores_activos')->first();
+        $conciliadoresActivos = $configuracion && $configuracion->valor
+            ? json_decode($configuracion->valor, true)
+            : [];
+
+        $conciliadoresData = [];
+        if (!empty($conciliadoresActivos)) {
+            $conciliadoresData = Conciliador::with(['persona', 'centro'])
+                ->whereIn('id', $conciliadoresActivos)
+                ->get()
+                ->map(function($c) {
+                    $nombre = $c->persona 
+                              ? trim($c->persona->nombre . ' ' . $c->persona->primer_apellido . ' ' . $c->persona->segundo_apellido)
+                              : 'Sin nombre';
+                    return [
+                        'id' => $c->id,
+                        'nombre' => $nombre,
+                        'centro_id' => $c->centro_id,
+                        'centro_nombre' => $c->centro ? $c->centro->nombre : 'Sin centro'
+                    ];
+                })->toArray();
+        }
+
+        return response()->json([
+            'conciliadores_ids' => $conciliadoresActivos,
+            'conciliadores_detallado' => $conciliadoresData,
+            'total_configurados' => count($conciliadoresActivos)
+        ]);
+    }
+
+    /**
+     * Obtiene los conciliadores activos según configuración o retorna vacío si no hay.
+     * Si hay configuración, retorna solo esos. Si no hay, retorna null.
+     */
+    private function getConciliadoresActivos()
+    {
+        $configuracion = \App\Configuracion::where('clave', 'conciliadores_activos')->first();
+        
+        if (!$configuracion || !$configuracion->valor) {
+            return null; // Sin configuración, usar lógica original
+        }
+
+        $conciliadoresActivos = json_decode($configuracion->valor, true);
+        return !empty($conciliadoresActivos) ? $conciliadoresActivos : null;
+    }
+
+    /**
      * Resuelve los centros a usar en base a la configuración enviada por query.
      * Acepta centros=1,2,3 o centros[]=1&centros[]=2. Mantiene compatibilidad con centro_id.
      */
@@ -79,14 +215,27 @@ class DashboardController extends Controller
 
     /**
      * Obtiene todos los conciliadores con su nombre.
+     * Si hay conciliadores configurados en la BD, retorna solo esos.
+     * Si no, retorna todos los del centro permitido.
      */
     public function getConciliadores(Request $request)
     {
         $centrosPermitidos = $this->getCentrosPermitidos($request);
 
-        $conciliadores = Conciliador::with(['persona', 'centro'])
-            ->whereIn('centro_id', $centrosPermitidos)
-            ->get()
+        // Verificar si hay configuración de conciliadores activos
+        $conciliadoresActivos = $this->getConciliadoresActivos();
+
+        $query = Conciliador::with(['persona', 'centro']);
+
+        if ($conciliadoresActivos !== null) {
+            // Usar conciliadores configurados
+            $query->whereIn('id', $conciliadoresActivos);
+        } else {
+            // Usar todos los de los centros permitidos
+            $query->whereIn('centro_id', $centrosPermitidos);
+        }
+
+        $conciliadores = $query->get()
             ->map(function($c) {
                 $nombre = $c->persona 
                           ? trim($c->persona->nombre . ' ' . $c->persona->primer_apellido . ' ' . $c->persona->segundo_apellido)
@@ -108,12 +257,19 @@ class DashboardController extends Controller
     public function getAudiencias(Request $request, $id)
     {
         $centrosPermitidos = $this->getCentrosPermitidos($request);
+        $conciliadoresActivos = $this->getConciliadoresActivos();
 
-        // Validar que el conciliador exista y pertenezca a los centros permitidos
-        $conciliadorValido = Conciliador::whereIn('centro_id', $centrosPermitidos)->find($id);
+        // Validación del conciliador
+        if ($conciliadoresActivos !== null) {
+            // Si hay configuración, validar que sea un conciliador activo
+            $conciliadorValido = Conciliador::whereIn('id', $conciliadoresActivos)->find($id);
+        } else {
+            // Si no hay configuración, validar que pertenezca al centro
+            $conciliadorValido = Conciliador::whereIn('centro_id', $centrosPermitidos)->find($id);
+        }
 
         if (!$conciliadorValido) {
-            return response()->json(['error' => 'Conciliador no encontrado o no pertenece a los centros solicitados'], 404);
+            return response()->json(['error' => 'Conciliador no encontrado o no tiene permisos'], 404);
         }
 
         $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
@@ -195,11 +351,19 @@ class DashboardController extends Controller
     public function getEstadisticas(Request $request, $id)
     {
         $centrosPermitidos = $this->getCentrosPermitidos($request);
+        $conciliadoresActivos = $this->getConciliadoresActivos();
 
         if ($id !== 'todos' && $id != 0) {
-            $conciliadorValido = Conciliador::whereIn('centro_id', $centrosPermitidos)->find($id);
+            if ($conciliadoresActivos !== null) {
+                // Validar que sea un conciliador activo
+                $conciliadorValido = Conciliador::whereIn('id', $conciliadoresActivos)->find($id);
+            } else {
+                // Validar que pertenezca al centro
+                $conciliadorValido = Conciliador::whereIn('centro_id', $centrosPermitidos)->find($id);
+            }
+            
             if (!$conciliadorValido) {
-                return response()->json(['error' => 'Conciliador no encontrado o no pertenece a los centros solicitados'], 404);
+                return response()->json(['error' => 'Conciliador no encontrado o no tiene permisos'], 404);
             }
         }
 
@@ -219,8 +383,12 @@ class DashboardController extends Controller
                       });
             });
         } else {
-            // Obtenemos todos los IDs válidos de los conciliadores de esos centros
-            $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosPermitidos)->pluck('id')->toArray();
+            // Para 'todos', usar conciliadores configurados si existen, si no usar todos del centro
+            if ($conciliadoresActivos !== null) {
+                $conciliadoresIdsValidos = $conciliadoresActivos;
+            } else {
+                $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosPermitidos)->pluck('id')->toArray();
+            }
             
             $audienciasQuery->where(function($query) use ($conciliadoresIdsValidos) {
                 $query->whereIn('conciliador_id', $conciliadoresIdsValidos)
@@ -274,8 +442,10 @@ class DashboardController extends Controller
         $efectividadReal = $totalConciliados > 0 ? round(($convenios / $totalConciliados) * 100, 2) : 0;
 
         return response()->json([
-            'total_audiencias' => $totalAudiencias,            'total_audiencias_inmediatas' => $inmediatas,
-            'total_audiencias_ordinarias' => $totalAudiencias - $inmediatas,            'convenios' => $convenios,
+            'total_audiencias' => $totalAudiencias,
+            'total_audiencias_inmediatas' => $inmediatas,
+            'total_audiencias_ordinarias' => $totalAudiencias - $inmediatas,
+            'convenios' => $convenios,
             'no_convenios' => $noConvenios,
             'archivados' => $archivados,
             'sin_resolucion' => $sinResolucion,
@@ -292,14 +462,19 @@ class DashboardController extends Controller
     public function getResumenGeneral(Request $request)
     {
         $centrosFiltro = $this->getCentrosPermitidos($request);
+        $conciliadoresActivos = $this->getConciliadoresActivos();
 
         $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
         $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
         
         $incluirInmediatas = $request->query('incluir_inmediatas', 'true');
 
-        // Identificar IDs de conciliadores válidos según los centros
-        $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosFiltro)->pluck('id')->toArray();
+        // Identificar IDs de conciliadores válidos
+        if ($conciliadoresActivos !== null) {
+            $conciliadoresIdsValidos = $conciliadoresActivos;
+        } else {
+            $conciliadoresIdsValidos = Conciliador::whereIn('centro_id', $centrosFiltro)->pluck('id')->toArray();
+        }
 
         // Obtener nombres de los centros filtrados
         $centrosInfo = Centro::whereIn('id', $centrosFiltro)->select('id', 'nombre')->get();
