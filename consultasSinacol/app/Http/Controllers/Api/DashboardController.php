@@ -10,6 +10,7 @@ use App\Centro;
 use App\Configuracion;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Schema;
+use App\Solicitud;
 
 class DashboardController extends Controller
 {
@@ -1270,6 +1271,65 @@ class DashboardController extends Controller
             'convenios_con_monto_registrado' => $conveniosConMonto,
             'monto_total_recuperado' => $impactoTotal,
             'mensaje_director' => "Se han recuperado $" . number_format($impactoTotal, 2) . " MXN en convenios este periodo."
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Total de solicitudes generadas vs confirmadas en el periodo.
+     * Generadas = por created_at.
+     * Confirmadas = ratificada == true (de las generadas en ese rango, o de todo el universo).
+     */
+    public function getEstadisticasSolicitudes(Request $request)
+    {
+        $centrosFiltro = $this->getCentrosPermitidos($request);
+
+        $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
+        $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
+
+        // Basar el universo principal en solicitudes generadas (created_at) en el rango
+        $queryBase = Solicitud::whereIn('centro_id', $centrosFiltro)
+            ->whereBetween('created_at', [
+                $fechaInicio . ' 00:00:00', 
+                $fechaFin . ' 23:59:59'
+            ]);
+
+        // Todas las generadas
+        $generadasTotal = (clone $queryBase)->count();
+
+        // Aquellas generadas en ese periodo que además están ratificadas
+        $confirmadasTotal = (clone $queryBase)->where('ratificada', true)->count();
+
+        // Solicitudes virtuales (remotas)
+        $remotasGeneradasTotal = (clone $queryBase)->where('virtual', true)->count();
+        $remotasConfirmadasTotal = (clone $queryBase)->where('virtual', true)->where('ratificada', true)->count();
+
+        // Alternativamente, si necesitas un desglose por días para armar una gráfica:
+        $solicitudes = $queryBase->select('id', 'created_at', 'ratificada', 'virtual')->get();
+        
+        $desgloseDiario = $solicitudes->groupBy(function($s) {
+            return Carbon::parse($s->created_at)->toDateString();
+        })->map(function($solicitudesDia, $fecha) {
+            return [
+                'fecha' => $fecha,
+                'generadas' => $solicitudesDia->count(),
+                'confirmadas' => $solicitudesDia->where('ratificada', true)->count(),
+                'remotas_generadas' => $solicitudesDia->where('virtual', true)->count(),
+                'remotas_confirmadas' => $solicitudesDia->where('virtual', true)->where('ratificada', true)->count()
+            ];
+        })->values()->sortBy('fecha')->values();
+
+        return response()->json([
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+            'totales' => [
+                'solicitudes_generadas' => $generadasTotal,
+                'solicitudes_confirmadas' => $confirmadasTotal,
+                'solicitudes_remotas_generadas' => $remotasGeneradasTotal,
+                'solicitudes_remotas_confirmadas' => $remotasConfirmadasTotal,
+                'eficiencia_confirmacion_porcentaje' => $generadasTotal > 0 ? round(($confirmadasTotal / $generadasTotal) * 100, 2) : 0,
+                'eficiencia_confirmacion_remotas_porcentaje' => $remotasGeneradasTotal > 0 ? round(($remotasConfirmadasTotal / $remotasGeneradasTotal) * 100, 2) : 0
+            ],
+            'desglose_diario' => $desgloseDiario
         ], 200, [], JSON_UNESCAPED_UNICODE);
     }
 }
