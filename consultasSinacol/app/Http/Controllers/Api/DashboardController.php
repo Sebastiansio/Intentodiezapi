@@ -10,6 +10,7 @@ use App\Centro;
 use App\Configuracion;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 use App\Solicitud;
 
 class DashboardController extends Controller
@@ -238,6 +239,23 @@ class DashboardController extends Controller
         } catch (\Exception $e) {
             return (string) $hora;
         }
+    }
+
+    private function parseFiltroBooleano($valor)
+    {
+        if ($valor === null || $valor === '' || $valor === 'todas' || $valor === 'todos' || $valor === 'all') {
+            return null;
+        }
+
+        if ($valor === true || $valor === 'true' || $valor === '1' || $valor === 1 || $valor === 'si' || $valor === 'sí') {
+            return true;
+        }
+
+        if ($valor === false || $valor === 'false' || $valor === '0' || $valor === 0 || $valor === 'no') {
+            return false;
+        }
+
+        return null;
     }
 
     /**
@@ -1441,6 +1459,83 @@ class DashboardController extends Controller
                 'eficiencia_confirmacion_remotas_porcentaje' => $remotasGeneradasTotal > 0 ? round(($remotasConfirmadasTotal / $remotasGeneradasTotal) * 100, 2) : 0
             ],
             'desglose_diario' => $desgloseDiario
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Cantidad de solicitudes generadas por sede para gráfico de barras.
+     * Filtros opcionales: remotas, confirmadas y rango de meses (created_at).
+     */
+    public function getSolicitudesPorSede(Request $request)
+    {
+        $centrosFiltro = $this->getCentrosPermitidos($request);
+
+        $anio = (int) $request->query('anio', Carbon::now()->year);
+        $mesInicio = (int) $request->query('mes_inicio', 1);
+        $mesFin = (int) $request->query('mes_fin', Carbon::now()->month);
+
+        $mesInicio = max(1, min(12, $mesInicio));
+        $mesFin = max(1, min(12, $mesFin));
+
+        if ($mesInicio > $mesFin) {
+            $tmp = $mesInicio;
+            $mesInicio = $mesFin;
+            $mesFin = $tmp;
+        }
+
+        $filtroRemotas = $this->parseFiltroBooleano($request->query('remotas', 'todas'));
+        $filtroConfirmadas = $this->parseFiltroBooleano($request->query('confirmadas', 'todas'));
+
+        $fechaInicio = Carbon::create($anio, $mesInicio, 1)->startOfDay();
+        $fechaFin = Carbon::create($anio, $mesFin, 1)->endOfMonth()->endOfDay();
+
+        $query = Solicitud::query()
+            ->whereIn('centro_id', $centrosFiltro)
+            ->whereBetween('created_at', [$fechaInicio, $fechaFin]);
+
+        if ($filtroRemotas !== null) {
+            $query->where('virtual', $filtroRemotas);
+        }
+
+        if ($filtroConfirmadas !== null) {
+            $query->where('ratificada', $filtroConfirmadas);
+        }
+
+        $conteoPorSede = $query
+            ->select('centro_id', DB::raw('COUNT(*) as total'))
+            ->groupBy('centro_id')
+            ->pluck('total', 'centro_id');
+
+        $centros = Centro::whereIn('id', $centrosFiltro)
+            ->select('id', 'nombre')
+            ->orderBy('nombre')
+            ->get();
+
+        $barras = $centros->map(function ($centro) use ($conteoPorSede) {
+            return [
+                'centro_id' => (int) $centro->id,
+                'sede' => $centro->nombre,
+                'solicitudes_generadas' => (int) ($conteoPorSede[$centro->id] ?? 0),
+            ];
+        })->values();
+
+        return response()->json([
+            'filtros' => [
+                'anio' => $anio,
+                'mes_inicio' => $mesInicio,
+                'mes_fin' => $mesFin,
+                'fecha_inicio' => $fechaInicio->toDateString(),
+                'fecha_fin' => $fechaFin->toDateString(),
+                'remotas' => $filtroRemotas,
+                'confirmadas' => $filtroConfirmadas,
+                'centros_incluidos' => $centrosFiltro,
+            ],
+            'grafica_barras' => [
+                'labels' => $barras->pluck('sede')->values(),
+                'values' => $barras->pluck('solicitudes_generadas')->values(),
+                'total_solicitudes' => (int) $barras->sum('solicitudes_generadas'),
+                'series' => $barras,
+            ],
         ], 200, [], JSON_UNESCAPED_UNICODE);
     }
 }

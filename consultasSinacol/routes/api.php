@@ -28,6 +28,7 @@ Route::get('dashboard/motivos-no-convenio', [DashboardController::class, 'getMot
 Route::get('dashboard/historico-mensual', [DashboardController::class, 'getHistoricoMensual']);
 Route::get('dashboard/impacto-economico', [DashboardController::class, 'getImpactoEconomico']);
 Route::get('dashboard/solicitudes', [DashboardController::class, 'getEstadisticasSolicitudes']);
+Route::get('dashboard/solicitudes-por-sede', [DashboardController::class, 'getSolicitudesPorSede']);
 Route::get('dashboard/conciliadores', [DashboardController::class, 'getConciliadores']);
 Route::get('dashboard/conciliadores/{id}/agenda-dia', [DashboardController::class, 'getAgendaDia']);
 Route::get('dashboard/conciliadores/{id}/audiencias', [DashboardController::class, 'getAudiencias']);
