@@ -33,6 +33,7 @@ Route::get('dashboard/conciliadores', [DashboardController::class, 'getConciliad
 Route::get('dashboard/conciliadores/{id}/agenda-dia', [DashboardController::class, 'getAgendaDia']);
 Route::get('dashboard/conciliadores/{id}/audiencias', [DashboardController::class, 'getAudiencias']);
 Route::get('dashboard/conciliadores/{id}/estadisticas', [DashboardController::class, 'getEstadisticas']);
+Route::get('stats/volumen', [DashboardController::class, 'getStatsVolumen']);
 
 Route::get('citas/datos-solicitud/{folio}/{anio}', [AudienciasController::class, 'datosSolicitud'])
     ->where([

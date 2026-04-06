@@ -258,6 +258,126 @@ class DashboardController extends Controller
         return null;
     }
 
+    private function getSedesFiltro(Request $request)
+    {
+        $sedes = $request->query('sedes');
+
+        if ($sedes === null || $sedes === '') {
+            return $this->getCentrosPermitidos($request);
+        }
+
+        if (is_string($sedes)) {
+            $sedes = explode(',', $sedes);
+        }
+
+        if (!is_array($sedes)) {
+            return $this->getCentrosPermitidos($request);
+        }
+
+        $sedes = array_values(array_filter(array_map(function ($sedeId) {
+            return (int) trim((string) $sedeId);
+        }, $sedes), function ($sedeId) {
+            return $sedeId > 0;
+        }));
+
+        if (empty($sedes)) {
+            return $this->getCentrosPermitidos($request);
+        }
+
+        $sedesValidas = Centro::whereIn('id', $sedes)
+            ->pluck('id')
+            ->map(function ($id) {
+                return (int) $id;
+            })
+            ->toArray();
+
+        return !empty($sedesValidas) ? $sedesValidas : $this->getCentrosPermitidos($request);
+    }
+
+    private function getPeriodicidadConfig($periodicidad)
+    {
+        if ($periodicidad === 'quincena') {
+            return [
+                'period_key' => "TO_CHAR(s.created_at, 'YYYY-MM') || '-Q' || CASE WHEN EXTRACT(DAY FROM s.created_at) <= 15 THEN '1' ELSE '2' END",
+                'period_label' => "TO_CHAR(s.created_at, 'Mon YYYY') || ' ' || CASE WHEN EXTRACT(DAY FROM s.created_at) <= 15 THEN 'Q1' ELSE 'Q2' END",
+                'period_order' => "DATE_TRUNC('month', s.created_at) + CASE WHEN EXTRACT(DAY FROM s.created_at) <= 15 THEN INTERVAL '0 day' ELSE INTERVAL '15 day' END",
+                'periodicidad' => 'quincena',
+            ];
+        }
+
+        return [
+            'period_key' => "TO_CHAR(s.created_at, 'YYYY-MM')",
+            'period_label' => "TO_CHAR(s.created_at, 'Mon YYYY')",
+            'period_order' => "DATE_TRUNC('month', s.created_at)",
+            'periodicidad' => 'mes',
+        ];
+    }
+
+    private function getDimensionConfig($dimension)
+    {
+        if ($dimension === 'objeto_solicitud') {
+            $objetoColumns = [];
+            if (Schema::hasTable('objeto_solicitudes')) {
+                if (Schema::hasColumn('objeto_solicitudes', 'nombre')) {
+                    $objetoColumns[] = 'os.nombre';
+                }
+                if (Schema::hasColumn('objeto_solicitudes', 'name')) {
+                    $objetoColumns[] = 'os.name';
+                }
+            }
+
+            if (empty($objetoColumns)) {
+                $objetoColumns[] = "'Sin objeto'";
+            }
+
+            return [
+                'dimension' => 'objeto_solicitud',
+                'id_select' => 's.objeto_solicitud_id',
+                'label_select' => 'COALESCE(' . implode(', ', $objetoColumns) . ", 'Sin objeto')",
+                'joins' => function ($query) {
+                    return $query->leftJoin('objeto_solicitudes as os', 'os.id', '=', 's.objeto_solicitud_id');
+                },
+            ];
+        }
+
+        if ($dimension === 'conciliador') {
+            return [
+                'dimension' => 'conciliador',
+                'id_select' => 'a.conciliador_id',
+                'label_select' => "COALESCE(TRIM(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(p.primer_apellido, ''), ' ', COALESCE(p.segundo_apellido, ''))), 'Sin conciliador')",
+                'joins' => function ($query) {
+                    return $query
+                        ->leftJoin('expedientes as e', 'e.solicitud_id', '=', 's.id')
+                        ->leftJoin('audiencias as a', 'a.expediente_id', '=', 'e.id')
+                        ->leftJoin('conciliadores as con', 'con.id', '=', 'a.conciliador_id')
+                        ->leftJoin('personas as p', 'p.id', '=', 'con.persona_id');
+                },
+            ];
+        }
+
+        return [
+            'dimension' => 'sede',
+            'id_select' => 's.centro_id',
+            'label_select' => "COALESCE(c.nombre, 'Sede no identificada')",
+            'joins' => function ($query) {
+                return $query->leftJoin('centros as c', 'c.id', '=', 's.centro_id');
+            },
+        ];
+    }
+
+    private function getSolicitudMontoExpression()
+    {
+        $candidates = ['monto', 'monto_total', 'cuantia', 'cantidad_reclamada', 'salario'];
+
+        foreach ($candidates as $column) {
+            if (Schema::hasColumn('solicitudes', $column)) {
+                return "COALESCE(s.{$column}, 0)";
+            }
+        }
+
+        return '0';
+    }
+
     /**
      * Devuelve todos los centros disponibles para que el front configure filtros.
      */
@@ -1536,6 +1656,174 @@ class DashboardController extends Controller
                 'total_solicitudes' => (int) $barras->sum('solicitudes_generadas'),
                 'series' => $barras,
             ],
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Endpoint dimensional para volumen historico de solicitudes.
+     * Permite agrupar por sede, objeto_solicitud o conciliador y por mes o quincena.
+     */
+    public function getStatsVolumen(Request $request)
+    {
+        $sedesFiltro = $this->getSedesFiltro($request);
+
+        $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfYear()->toDateString());
+        $fechaFin = $request->query('fecha_fin', Carbon::now()->toDateString());
+
+        $dimensionRequest = strtolower((string) $request->query('dimension', 'sede'));
+        $periodicidadRequest = strtolower((string) $request->query('periodicidad', 'mes'));
+
+        $dimension = in_array($dimensionRequest, ['sede', 'objeto_solicitud', 'conciliador']) ? $dimensionRequest : 'sede';
+        $periodicidad = in_array($periodicidadRequest, ['mes', 'quincena']) ? $periodicidadRequest : 'mes';
+
+        $filtroRemotas = $this->parseFiltroBooleano($request->query('remotas', 'todas'));
+        $filtroConfirmadas = $this->parseFiltroBooleano($request->query('confirmadas', 'todas'));
+
+        $periodConfig = $this->getPeriodicidadConfig($periodicidad);
+        $dimensionConfig = $this->getDimensionConfig($dimension);
+        $montoExpr = $this->getSolicitudMontoExpression();
+
+        $query = Solicitud::query()->from('solicitudes as s');
+
+        $joinHandler = $dimensionConfig['joins'];
+        $joinHandler($query);
+
+        $query->whereBetween('s.created_at', [
+                Carbon::parse($fechaInicio)->startOfDay(),
+                Carbon::parse($fechaFin)->endOfDay(),
+            ])
+            ->whereIn('s.centro_id', $sedesFiltro)
+            ->when($filtroRemotas !== null, function ($q) use ($filtroRemotas) {
+                $q->where('s.virtual', $filtroRemotas);
+            })
+            ->when($filtroConfirmadas !== null, function ($q) use ($filtroConfirmadas) {
+                $q->where('s.ratificada', $filtroConfirmadas);
+            })
+            ->when($dimension === 'conciliador', function ($q) {
+                $q->whereNotNull('a.conciliador_id');
+            });
+
+        $periodKey = $periodConfig['period_key'];
+        $periodLabel = $periodConfig['period_label'];
+        $periodOrder = $periodConfig['period_order'];
+        $dimensionId = $dimensionConfig['id_select'];
+        $dimensionLabel = $dimensionConfig['label_select'];
+
+        $series = $query
+            ->selectRaw("{$periodKey} AS period_key")
+            ->selectRaw("{$periodLabel} AS period_label")
+            ->selectRaw("{$periodOrder} AS period_order")
+            ->selectRaw("{$dimensionId} AS dimension_id")
+            ->selectRaw("{$dimensionLabel} AS dimension_label")
+            ->selectRaw('COUNT(DISTINCT s.id) AS total_solicitudes')
+            ->selectRaw("SUM({$montoExpr}) AS monto_total")
+            ->selectRaw("SUM(CASE WHEN EXISTS (
+                SELECT 1
+                FROM expedientes ex
+                INNER JOIN audiencias au ON au.expediente_id = ex.id
+                WHERE ex.solicitud_id = s.id
+                  AND au.tipo_terminacion_audiencia_id = 3
+                  AND au.deleted_at IS NULL
+            ) THEN 1 ELSE 0 END) AS incomparecencias")
+            ->groupByRaw("{$periodKey}, {$periodLabel}, {$periodOrder}, {$dimensionId}, {$dimensionLabel}")
+            ->orderByRaw("{$periodOrder} ASC")
+            ->orderBy('dimension_label', 'asc')
+            ->get()
+            ->map(function ($row) {
+                $totalSolicitudes = (int) $row->total_solicitudes;
+                $incomparecencias = (int) $row->incomparecencias;
+
+                return [
+                    'period_key' => $row->period_key,
+                    'period_label' => $row->period_label,
+                    'dimension_id' => $row->dimension_id !== null ? (int) $row->dimension_id : null,
+                    'dimension_label' => $row->dimension_label,
+                    'total_solicitudes' => $totalSolicitudes,
+                    'monto_total' => (float) $row->monto_total,
+                    'incomparecencias' => $incomparecencias,
+                    'tasa_incomparecencia' => $totalSolicitudes > 0
+                        ? round(($incomparecencias / $totalSolicitudes) * 100, 2)
+                        : 0,
+                ];
+            })
+            ->values();
+
+        $periodosOrdenados = $series
+            ->map(function ($item) {
+                return [
+                    'period_key' => $item['period_key'],
+                    'period_label' => $item['period_label'],
+                ];
+            })
+            ->unique('period_key')
+            ->values();
+
+        $dimensionesOrdenadas = $series
+            ->pluck('dimension_label')
+            ->unique()
+            ->values();
+
+        $seriesIndexada = [];
+        foreach ($series as $item) {
+            $dimensionLabel = $item['dimension_label'];
+            $periodKey = $item['period_key'];
+            $seriesIndexada[$dimensionLabel][$periodKey] = $item;
+        }
+
+        $datasets = $dimensionesOrdenadas->map(function ($dimensionLabel) use ($periodosOrdenados, $seriesIndexada) {
+            $dataSolicitudes = [];
+            $dataMontos = [];
+            $dataIncomparecencias = [];
+            $dataTasaIncomparecencia = [];
+
+            foreach ($periodosOrdenados as $periodo) {
+                $periodKey = $periodo['period_key'];
+                $valor = $seriesIndexada[$dimensionLabel][$periodKey] ?? null;
+
+                $dataSolicitudes[] = $valor ? (int) $valor['total_solicitudes'] : 0;
+                $dataMontos[] = $valor ? (float) $valor['monto_total'] : 0;
+                $dataIncomparecencias[] = $valor ? (int) $valor['incomparecencias'] : 0;
+                $dataTasaIncomparecencia[] = $valor ? (float) $valor['tasa_incomparecencia'] : 0;
+            }
+
+            return [
+                'label' => $dimensionLabel,
+                'data' => $dataSolicitudes,
+                'monto_data' => $dataMontos,
+                'incomparecencias_data' => $dataIncomparecencias,
+                'tasa_incomparecencia_data' => $dataTasaIncomparecencia,
+            ];
+        })->values();
+
+        $totalesSolicitudes = (int) $series->sum('total_solicitudes');
+        $totalesIncomparecencias = (int) $series->sum('incomparecencias');
+
+        return response()->json([
+            'filters' => [
+                'sedes' => $sedesFiltro,
+                'fecha_inicio' => Carbon::parse($fechaInicio)->toDateString(),
+                'fecha_fin' => Carbon::parse($fechaFin)->toDateString(),
+                'dimension' => $dimension,
+                'periodicidad' => $periodConfig['periodicidad'],
+                'remotas' => $filtroRemotas,
+                'confirmadas' => $filtroConfirmadas,
+            ],
+            'totals' => [
+                'total_solicitudes' => $totalesSolicitudes,
+                'monto_total' => (float) $series->sum('monto_total'),
+                'incomparecencias' => $totalesIncomparecencias,
+                'tasa_incomparecencia' => $totalesSolicitudes > 0
+                    ? round(($totalesIncomparecencias / $totalesSolicitudes) * 100, 2)
+                    : 0,
+                'periodos' => $periodosOrdenados->pluck('period_key')->values(),
+                'dimensiones' => $dimensionesOrdenadas,
+            ],
+            'chart_pivot' => [
+                'x_axis' => $periodosOrdenados->pluck('period_label')->values(),
+                'x_axis_keys' => $periodosOrdenados->pluck('period_key')->values(),
+                'datasets' => $datasets,
+            ],
+            'series' => $series,
         ], 200, [], JSON_UNESCAPED_UNICODE);
     }
 }
