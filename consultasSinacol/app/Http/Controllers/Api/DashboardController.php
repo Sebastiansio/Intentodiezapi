@@ -138,6 +138,108 @@ class DashboardController extends Controller
         return $configuracion->{$valueColumn} ?? null;
     }
 
+    private function getPesoAudienciaPorParte($audiencia)
+    {
+        $citados = 0;
+
+        if ($audiencia->audienciaParte) {
+            foreach ($audiencia->audienciaParte as $ap) {
+                if ($ap->parte && $ap->parte->tipo_parte_id == 2) {
+                    $citados++;
+                }
+            }
+        }
+
+        return max(1, $citados);
+    }
+
+    private function getDesgloseResolucionesPorCategoria($audiencias, $porParte = false)
+    {
+        $desglose = [
+            'convenios' => 0,
+            'no_convenios' => 0,
+            'no_convenios_incomparecencia' => 0,
+            'archivados' => 0,
+            'sin_resolucion' => 0,
+        ];
+
+        foreach ($audiencias as $a) {
+            $peso = $porParte ? $this->getPesoAudienciaPorParte($a) : 1;
+
+            if ($a->resolucion_id == 1) {
+                $desglose['convenios'] += $peso;
+            } elseif (in_array($a->resolucion_id, [2, 3])) {
+                if ($a->tipo_terminacion_audiencia_id == 3) {
+                    $desglose['no_convenios_incomparecencia'] += $peso;
+                } else {
+                    $desglose['no_convenios'] += $peso;
+                }
+            } elseif ($a->resolucion_id == 4) {
+                $desglose['archivados'] += $peso;
+            } else {
+                $desglose['sin_resolucion'] += $peso;
+            }
+        }
+
+        return $desglose;
+    }
+
+    private function getEstadoAgendaTexto($audiencia)
+    {
+        if (!$audiencia->resolucion_id) {
+            return 'Pendiente';
+        }
+
+        if ($audiencia->resolucion_id == 1) {
+            return 'Confirmada';
+        }
+
+        if (in_array($audiencia->resolucion_id, [2, 3])) {
+            return $audiencia->tipo_terminacion_audiencia_id == 3 ? 'Suspendida' : 'Cancelada';
+        }
+
+        if ($audiencia->resolucion_id == 4) {
+            return 'Cancelada';
+        }
+
+        return 'Pendiente';
+    }
+
+    private function getPartesAgendaTexto($audiencia)
+    {
+        $partes = [];
+
+        if ($audiencia->audienciaParte) {
+            foreach ($audiencia->audienciaParte as $ap) {
+                if (!$ap->parte) {
+                    continue;
+                }
+
+                $nombreParte = trim(($ap->parte->nombre ?? '') . ' ' . ($ap->parte->primer_apellido ?? '') . ' ' . ($ap->parte->segundo_apellido ?? ''));
+                if ($nombreParte !== '') {
+                    $partes[] = $nombreParte;
+                }
+            }
+        }
+
+        $partes = array_values(array_unique($partes));
+
+        return !empty($partes) ? implode(' vs. ', $partes) : 'Sin partes registradas';
+    }
+
+    private function getHoraAgendaTexto($hora)
+    {
+        if (!$hora) {
+            return 'Sin hora';
+        }
+
+        try {
+            return Carbon::parse($hora)->format('h:i A');
+        } catch (\Exception $e) {
+            return (string) $hora;
+        }
+    }
+
     /**
      * Devuelve todos los centros disponibles para que el front configure filtros.
      */
@@ -780,15 +882,7 @@ class DashboardController extends Controller
                 return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
             })->map(function ($grupo) {
                 return $grupo->sum(function($a) {
-                    $citados = 0;
-                    if ($a->audienciaParte) {
-                        foreach ($a->audienciaParte as $ap) {
-                            if ($ap->parte && $ap->parte->tipo_parte_id == 2) {
-                                $citados++;
-                            }
-                        }
-                    }
-                    return max(1, $citados);
+                    return $this->getPesoAudienciaPorParte($a);
                 });
             });
 
@@ -804,6 +898,9 @@ class DashboardController extends Controller
                 }
             }
 
+            $desgloseResolucionesSede = $this->getDesgloseResolucionesPorCategoria($audienciasDeSede);
+            $desgloseResolucionesSedePorParte = $this->getDesgloseResolucionesPorCategoria($audienciasDeSede, true);
+
             return [
                 'sede' => $sede,
                 'total_audiencias' => $totalDeSede,
@@ -811,7 +908,9 @@ class DashboardController extends Controller
                 'total_audiencias_ordinarias' => $ordinariasDeSede,
                 'resoluciones' => $resolucionesAgrupadasSede,
                 'resoluciones_por_parte' => $resolucionesAgrupadasSedePorParte,
-                'estatus_notificaciones' => $notificacionesAgrupadasSede
+                'estatus_notificaciones' => $notificacionesAgrupadasSede,
+                'desglose_resoluciones' => $desgloseResolucionesSede,
+                'desglose_resoluciones_por_parte' => $desgloseResolucionesSedePorParte
             ];
         })->values();
 
@@ -1062,7 +1161,7 @@ class DashboardController extends Controller
             ->orderBy('hora_inicio')
             ->get();
 
-        $agenda = $audiencias->map(function($a) {
+            $agenda = $audiencias->map(function($a) {
             $sala = $a->salasAudiencias && $a->salasAudiencias->count() > 0 
                 ? $a->salasAudiencias->first()->sala->sala 
                 : 'Sin sala asignada';
@@ -1086,22 +1185,34 @@ class DashboardController extends Controller
                 })->filter()->values()->toArray();
             }
 
+            $partesTexto = $this->getPartesAgendaTexto($a);
+
             return [
                 'id' => $a->id,
+                'hora' => $this->getHoraAgendaTexto($a->hora_inicio),
                 'hora_inicio' => $a->hora_inicio,
                 'hora_fin' => $a->hora_fin,
                 'expediente' => $a->expediente ? $a->expediente->folio . '/' . $a->expediente->anio : 'Sin expediente',
                 'inmediata' => $a->expediente && $a->expediente->solicitud ? (bool) $a->expediente->solicitud->inmediata : false,
                 'sala' => $sala,
+                'estado' => $this->getEstadoAgendaTexto($a),
                 'estado_actual' => $a->resolucion ? $a->resolucion->nombre : 'Pendiente o Sin resolución',
-                'partes' => $partesInvolucradas
+                'partes' => $partesTexto,
+                'partes_detalle' => $partesInvolucradas
             ];
         });
 
+        $mensaje = $audiencias->isEmpty()
+            ? 'No hay citas para la fecha seleccionada.'
+            : 'Agenda cargada correctamente.';
+
         return response()->json([
+            'conciliador_id' => (int) $id,
             'fecha' => $fecha,
             'total_audiencias' => $audiencias->count(),
-            'agenda' => $agenda
+            'audiencias' => $agenda,
+            'agenda' => $agenda,
+            'mensaje' => $mensaje
         ], 200, [], JSON_UNESCAPED_UNICODE);
     }
 
