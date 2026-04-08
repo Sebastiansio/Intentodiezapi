@@ -1605,6 +1605,15 @@ class DashboardController extends Controller
 
         $filtroRemotas = $this->parseFiltroBooleano($request->query('remotas', 'todas'));
         $filtroConfirmadas = $this->parseFiltroBooleano($request->query('confirmadas', 'todas'));
+        $filtroGenero = $request->query('genero', 'todos');
+
+        $generoNombre = 'Todos';
+        if ($filtroGenero !== 'todos' && $filtroGenero !== null) {
+            $generoObj = \App\Genero::find($filtroGenero);
+            if ($generoObj) {
+                $generoNombre = $generoObj->nombre ?? $generoObj->name ?? 'Desconocido';
+            }
+        }
 
         $fechaInicio = Carbon::create($anio, $mesInicio, 1)->startOfDay();
         $fechaFin = Carbon::create($anio, $mesFin, 1)->endOfMonth()->endOfDay();
@@ -1621,23 +1630,74 @@ class DashboardController extends Controller
             $query->where('ratificada', $filtroConfirmadas);
         }
 
+        if ($filtroGenero !== 'todos' && $filtroGenero !== null) {
+            $query->whereHas('solicitantes', function ($q) use ($filtroGenero) {
+                $q->where('genero_id', $filtroGenero);
+            });
+        }
+
         $conteoPorSede = $query
             ->select('centro_id', DB::raw('COUNT(*) as total'))
             ->groupBy('centro_id')
             ->pluck('total', 'centro_id');
+
+        $idsSolicitudes = $query->pluck('id');
+        $desgloseGeneroPorSede = DB::table('partes')
+            ->join('solicitudes', 'partes.solicitud_id', '=', 'solicitudes.id')
+            ->leftJoin('generos', 'partes.genero_id', '=', 'generos.id')
+            ->whereIn('partes.solicitud_id', $idsSolicitudes)
+            ->where('partes.tipo_parte_id', 1)
+            ->select(
+                'solicitudes.centro_id', 
+                'generos.id as genero_id', 
+                DB::raw('COALESCE(generos.name, generos.nombre, "No especificado") as genero_nombre'), 
+                DB::raw('COUNT(DISTINCT partes.solicitud_id) as total')
+            )
+            ->groupBy('solicitudes.centro_id', 'generos.id', 'generos.name', 'generos.nombre')
+            ->get()
+            ->groupBy('centro_id');
 
         $centros = Centro::whereIn('id', $centrosFiltro)
             ->select('id', 'nombre')
             ->orderBy('nombre')
             ->get();
 
-        $barras = $centros->map(function ($centro) use ($conteoPorSede) {
+        $barras = $centros->map(function ($centro) use ($conteoPorSede, $desgloseGeneroPorSede) {
+            $desglose = [];
+            if (isset($desgloseGeneroPorSede[$centro->id])) {
+                $desglose = $desgloseGeneroPorSede[$centro->id]->map(function($g) {
+                    return [
+                        'genero_id' => $g->genero_id,
+                        'genero_nombre' => $g->genero_nombre,
+                        'total' => (int) $g->total
+                    ];
+                })->values();
+            }
+
             return [
                 'centro_id' => (int) $centro->id,
                 'sede' => $centro->nombre,
                 'solicitudes_generadas' => (int) ($conteoPorSede[$centro->id] ?? 0),
+                'desglose_genero' => $desglose
             ];
         })->values();
+
+        // Desglose total por género general
+        $desgloseTotalGenero = collect();
+        foreach ($barras as $barra) {
+            foreach ($barra['desglose_genero'] as $dg) {
+                $nombre = $dg['genero_nombre'];
+                if (!$desgloseTotalGenero->has($nombre)) {
+                    $desgloseTotalGenero->put($nombre, [
+                        'genero_nombre' => $nombre,
+                        'total' => 0
+                    ]);
+                }
+                $item = $desgloseTotalGenero->get($nombre);
+                $item['total'] += $dg['total'];
+                $desgloseTotalGenero->put($nombre, $item);
+            }
+        }
 
         return response()->json([
             'filtros' => [
@@ -1648,12 +1708,15 @@ class DashboardController extends Controller
                 'fecha_fin' => $fechaFin->toDateString(),
                 'remotas' => $filtroRemotas,
                 'confirmadas' => $filtroConfirmadas,
+                'genero_id' => $filtroGenero,
+                'genero_nombre' => $generoNombre,
                 'centros_incluidos' => $centrosFiltro,
             ],
             'grafica_barras' => [
                 'labels' => $barras->pluck('sede')->values(),
                 'values' => $barras->pluck('solicitudes_generadas')->values(),
                 'total_solicitudes' => (int) $barras->sum('solicitudes_generadas'),
+                'desglose_genero_total' => $desgloseTotalGenero->values(),
                 'series' => $barras,
             ],
         ], 200, [], JSON_UNESCAPED_UNICODE);
