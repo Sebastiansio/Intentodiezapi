@@ -332,10 +332,14 @@ class DashboardController extends Controller
 
             return [
                 'dimension' => 'objeto_solicitud',
-                'id_select' => 's.objeto_solicitud_id',
+                'id_select' => 'os.id',
                 'label_select' => 'COALESCE(' . implode(', ', $objetoColumns) . ", 'Sin objeto')",
                 'joins' => function ($query) {
-                    return $query->leftJoin('objeto_solicitudes as os', 'os.id', '=', 's.objeto_solicitud_id');
+                    return $query
+                        ->leftJoin('objeto_solicitud_solicitud as oss', function ($join) {
+                            $join->on('oss.solicitud_id', '=', 's.id');
+                        })
+                        ->leftJoin('objeto_solicitudes as os', 'os.id', '=', 'oss.objeto_solicitud_id');
                 },
             ];
         }
@@ -343,13 +347,19 @@ class DashboardController extends Controller
         if ($dimension === 'conciliador') {
             return [
                 'dimension' => 'conciliador',
-                'id_select' => 'a.conciliador_id',
+                'id_select' => 'COALESCE(ca.conciliador_id, a.conciliador_id)',
                 'label_select' => "COALESCE(TRIM(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(p.primer_apellido, ''), ' ', COALESCE(p.segundo_apellido, ''))), 'Sin conciliador')",
                 'joins' => function ($query) {
                     return $query
                         ->leftJoin('expedientes as e', 'e.solicitud_id', '=', 's.id')
                         ->leftJoin('audiencias as a', 'a.expediente_id', '=', 'e.id')
-                        ->leftJoin('conciliadores as con', 'con.id', '=', 'a.conciliador_id')
+                        ->leftJoin('conciliadores_audiencias as ca', function ($join) {
+                            $join->on('ca.audiencia_id', '=', 'a.id')
+                                ->whereNull('ca.deleted_at');
+                        })
+                        ->leftJoin('conciliadores as con', function ($join) {
+                            $join->on('con.id', '=', DB::raw('COALESCE(ca.conciliador_id, a.conciliador_id)'));
+                        })
                         ->leftJoin('personas as p', 'p.id', '=', 'con.persona_id');
                 },
             ];
@@ -376,6 +386,282 @@ class DashboardController extends Controller
         }
 
         return '0';
+    }
+
+    private function getStatsBaseFiltros(Request $request)
+    {
+        $sedesFiltro = $this->getSedesFiltro($request);
+        $fechaInicio = Carbon::parse($request->query('fecha_inicio', Carbon::now()->startOfYear()->toDateString()))->startOfDay();
+        $fechaFin = Carbon::parse($request->query('fecha_fin', Carbon::now()->toDateString()))->endOfDay();
+
+        $filtroRemotas = $this->parseFiltroBooleano($request->query('remotas', 'todas'));
+        $filtroConfirmadas = $this->parseFiltroBooleano($request->query('confirmadas', 'todas'));
+        $filtroInmediatas = $this->parseFiltroBooleano($request->query('inmediatas', 'todas'));
+
+        $tipoSolicitud = $request->query('tipo_solicitud_id');
+        $tipoSolicitud = ($tipoSolicitud !== null && $tipoSolicitud !== '') ? (int) $tipoSolicitud : null;
+        if ($tipoSolicitud !== null && $tipoSolicitud <= 0) {
+            $tipoSolicitud = null;
+        }
+
+        return [
+            'sedes' => $sedesFiltro,
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+            'remotas' => $filtroRemotas,
+            'confirmadas' => $filtroConfirmadas,
+            'inmediatas' => $filtroInmediatas,
+            'tipo_solicitud_id' => $tipoSolicitud,
+        ];
+    }
+
+    private function applyStatsBaseFiltros($query, $filtros, $alias = 's')
+    {
+        $query->whereNull("{$alias}.deleted_at")
+            ->whereIn("{$alias}.centro_id", $filtros['sedes'])
+            ->whereBetween("{$alias}.created_at", [$filtros['fecha_inicio'], $filtros['fecha_fin']])
+            ->when($filtros['remotas'] !== null, function ($q) use ($filtros, $alias) {
+                $q->where("{$alias}.virtual", $filtros['remotas']);
+            })
+            ->when($filtros['confirmadas'] !== null, function ($q) use ($filtros, $alias) {
+                $q->where("{$alias}.ratificada", $filtros['confirmadas']);
+            })
+            ->when($filtros['inmediatas'] !== null, function ($q) use ($filtros, $alias) {
+                $q->where("{$alias}.inmediata", $filtros['inmediatas']);
+            })
+            ->when($filtros['tipo_solicitud_id'] !== null, function ($q) use ($filtros, $alias) {
+                $q->where("{$alias}.tipo_solicitud_id", $filtros['tipo_solicitud_id']);
+            });
+
+        return $query;
+    }
+
+    /**
+     * Conteos de solicitudes por sede.
+     */
+    public function getStatsSolicitudesConteos(Request $request)
+    {
+        $filtros = $this->getStatsBaseFiltros($request);
+
+        $query = DB::table('solicitudes as s')
+            ->leftJoin('centros as c', 'c.id', '=', 's.centro_id');
+
+        $this->applyStatsBaseFiltros($query, $filtros, 's');
+
+        $series = $query
+            ->selectRaw('s.centro_id as sede_id')
+            ->selectRaw("COALESCE(c.nombre, 'Sede no identificada') as sede")
+            ->selectRaw('COUNT(DISTINCT s.id) as total_solicitudes')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN s.ratificada = true THEN s.id END) as total_confirmadas')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN s.ratificada = false THEN s.id END) as total_no_confirmadas')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN s.virtual = true THEN s.id END) as total_remotas')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN s.virtual = false THEN s.id END) as total_presenciales')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN s.tipo_solicitud_id = 1 THEN s.id END) as total_trabajador')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN s.tipo_solicitud_id = 2 THEN s.id END) as total_patron_individual')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN s.tipo_solicitud_id = 3 THEN s.id END) as total_patron_colectivo')
+            ->groupBy('s.centro_id', 'c.nombre')
+            ->orderBy('sede', 'asc')
+            ->get()
+            ->map(function ($row) {
+                return [
+                    'sede_id' => $row->sede_id ? (int) $row->sede_id : null,
+                    'sede' => $row->sede,
+                    'total_solicitudes' => (int) $row->total_solicitudes,
+                    'total_confirmadas' => (int) $row->total_confirmadas,
+                    'total_no_confirmadas' => (int) $row->total_no_confirmadas,
+                    'total_remotas' => (int) $row->total_remotas,
+                    'total_presenciales' => (int) $row->total_presenciales,
+                    'total_trabajador' => (int) $row->total_trabajador,
+                    'total_patron_individual' => (int) $row->total_patron_individual,
+                    'total_patron_colectivo' => (int) $row->total_patron_colectivo,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'filters' => [
+                'sedes' => $filtros['sedes'],
+                'fecha_inicio' => $filtros['fecha_inicio']->toDateString(),
+                'fecha_fin' => $filtros['fecha_fin']->toDateString(),
+                'remotas' => $filtros['remotas'],
+                'confirmadas' => $filtros['confirmadas'],
+                'inmediatas' => $filtros['inmediatas'],
+                'tipo_solicitud_id' => $filtros['tipo_solicitud_id'],
+            ],
+            'totals' => [
+                'total_solicitudes' => (int) $series->sum('total_solicitudes'),
+                'total_confirmadas' => (int) $series->sum('total_confirmadas'),
+                'total_no_confirmadas' => (int) $series->sum('total_no_confirmadas'),
+                'total_remotas' => (int) $series->sum('total_remotas'),
+                'total_presenciales' => (int) $series->sum('total_presenciales'),
+            ],
+            'series' => $series,
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Conteos de audiencias y resoluciones por sede.
+     */
+    public function getStatsAudienciasConteos(Request $request)
+    {
+        $filtros = $this->getStatsBaseFiltros($request);
+
+        $query = DB::table('solicitudes as s')
+            ->leftJoin('centros as c', 'c.id', '=', 's.centro_id')
+            ->leftJoin('expedientes as e', function ($join) {
+                $join->on('e.solicitud_id', '=', 's.id')
+                    ->whereNull('e.deleted_at');
+            })
+            ->leftJoin('audiencias as a', function ($join) {
+                $join->on('a.expediente_id', '=', 'e.id')
+                    ->whereNull('a.deleted_at');
+            });
+
+        $this->applyStatsBaseFiltros($query, $filtros, 's');
+
+        $series = $query
+            ->selectRaw('s.centro_id as sede_id')
+            ->selectRaw("COALESCE(c.nombre, 'Sede no identificada') as sede")
+            ->selectRaw('COUNT(DISTINCT a.id) as total_audiencias')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN a.resolucion_id = 1 THEN a.id END) as hubo_convenio')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN a.resolucion_id = 2 THEN a.id END) as reagendada')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN a.resolucion_id = 3 THEN a.id END) as no_hubo_convenio')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN a.resolucion_id = 4 THEN a.id END) as archivada')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN a.tipo_terminacion_audiencia_id = 3 THEN a.id END) as incomparecencia')
+            ->groupBy('s.centro_id', 'c.nombre')
+            ->orderBy('sede', 'asc')
+            ->get()
+            ->map(function ($row) {
+                $totalAudiencias = (int) $row->total_audiencias;
+                $incomparecencia = (int) $row->incomparecencia;
+
+                return [
+                    'sede_id' => $row->sede_id ? (int) $row->sede_id : null,
+                    'sede' => $row->sede,
+                    'total_audiencias' => $totalAudiencias,
+                    'hubo_convenio' => (int) $row->hubo_convenio,
+                    'reagendada' => (int) $row->reagendada,
+                    'no_hubo_convenio' => (int) $row->no_hubo_convenio,
+                    'archivada' => (int) $row->archivada,
+                    'incomparecencia' => $incomparecencia,
+                    'tasa_incomparecencia' => $totalAudiencias > 0 ? round(($incomparecencia / $totalAudiencias) * 100, 2) : 0,
+                ];
+            })
+            ->values();
+
+        $totalAudiencias = (int) $series->sum('total_audiencias');
+        $totalIncomparecencias = (int) $series->sum('incomparecencia');
+
+        return response()->json([
+            'filters' => [
+                'sedes' => $filtros['sedes'],
+                'fecha_inicio' => $filtros['fecha_inicio']->toDateString(),
+                'fecha_fin' => $filtros['fecha_fin']->toDateString(),
+                'remotas' => $filtros['remotas'],
+                'confirmadas' => $filtros['confirmadas'],
+                'inmediatas' => $filtros['inmediatas'],
+                'tipo_solicitud_id' => $filtros['tipo_solicitud_id'],
+            ],
+            'totals' => [
+                'total_audiencias' => $totalAudiencias,
+                'hubo_convenio' => (int) $series->sum('hubo_convenio'),
+                'reagendada' => (int) $series->sum('reagendada'),
+                'no_hubo_convenio' => (int) $series->sum('no_hubo_convenio'),
+                'archivada' => (int) $series->sum('archivada'),
+                'incomparecencia' => $totalIncomparecencias,
+                'tasa_incomparecencia' => $totalAudiencias > 0 ? round(($totalIncomparecencias / $totalAudiencias) * 100, 2) : 0,
+            ],
+            'series' => $series,
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Conteos de productividad por conciliador.
+     */
+    public function getStatsConciliadoresConteos(Request $request)
+    {
+        $filtros = $this->getStatsBaseFiltros($request);
+
+        $asignacionesBase = DB::table('audiencias as a')
+            ->selectRaw('a.id as audiencia_id, a.expediente_id, a.conciliador_id, a.resolucion_id, a.tipo_terminacion_audiencia_id')
+            ->whereNull('a.deleted_at')
+            ->whereNotNull('a.conciliador_id');
+
+        $asignacionesSecundarias = DB::table('audiencias as a')
+            ->join('conciliadores_audiencias as ca', function ($join) {
+                $join->on('ca.audiencia_id', '=', 'a.id')
+                    ->whereNull('ca.deleted_at');
+            })
+            ->selectRaw('a.id as audiencia_id, a.expediente_id, ca.conciliador_id, a.resolucion_id, a.tipo_terminacion_audiencia_id')
+            ->whereNull('a.deleted_at');
+
+        $asignaciones = $asignacionesBase->unionAll($asignacionesSecundarias);
+
+        $query = DB::table('solicitudes as s')
+            ->join('expedientes as e', function ($join) {
+                $join->on('e.solicitud_id', '=', 's.id')
+                    ->whereNull('e.deleted_at');
+            })
+            ->joinSub($asignaciones, 'ac', function ($join) {
+                $join->on('ac.expediente_id', '=', 'e.id');
+            })
+            ->join('conciliadores as con', 'con.id', '=', 'ac.conciliador_id')
+            ->leftJoin('personas as p', 'p.id', '=', 'con.persona_id')
+            ->leftJoin('centros as c', 'c.id', '=', 'con.centro_id');
+
+        $this->applyStatsBaseFiltros($query, $filtros, 's');
+
+        $series = $query
+            ->selectRaw('ac.conciliador_id as conciliador_id')
+            ->selectRaw("COALESCE(TRIM(CONCAT(COALESCE(p.nombre, ''), ' ', COALESCE(p.primer_apellido, ''), ' ', COALESCE(p.segundo_apellido, ''))), CONCAT('Conciliador #', ac.conciliador_id)) as conciliador")
+            ->selectRaw("COALESCE(c.nombre, 'Sin sede') as sede")
+            ->selectRaw('COUNT(DISTINCT ac.audiencia_id) as total_audiencias')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN ac.resolucion_id = 1 THEN ac.audiencia_id END) as convenios')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN ac.resolucion_id = 3 THEN ac.audiencia_id END) as no_convenios')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN ac.resolucion_id = 4 THEN ac.audiencia_id END) as archivadas')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN ac.tipo_terminacion_audiencia_id = 3 THEN ac.audiencia_id END) as incomparecencias')
+            ->groupBy('ac.conciliador_id', 'p.nombre', 'p.primer_apellido', 'p.segundo_apellido', 'c.nombre')
+            ->orderBy('convenios', 'desc')
+            ->get()
+            ->map(function ($row) {
+                $convenios = (int) $row->convenios;
+                $noConvenios = (int) $row->no_convenios;
+                $incomparecencias = (int) $row->incomparecencias;
+                $baseEfectividad = $convenios + $noConvenios + $incomparecencias;
+
+                return [
+                    'conciliador_id' => (int) $row->conciliador_id,
+                    'conciliador' => trim($row->conciliador),
+                    'sede' => $row->sede,
+                    'total_audiencias' => (int) $row->total_audiencias,
+                    'convenios' => $convenios,
+                    'no_convenios' => $noConvenios,
+                    'archivadas' => (int) $row->archivadas,
+                    'incomparecencias' => $incomparecencias,
+                    'efectividad_conciliacion' => $baseEfectividad > 0 ? round(($convenios / $baseEfectividad) * 100, 2) : 0,
+                ];
+            })
+            ->values();
+
+        return response()->json([
+            'filters' => [
+                'sedes' => $filtros['sedes'],
+                'fecha_inicio' => $filtros['fecha_inicio']->toDateString(),
+                'fecha_fin' => $filtros['fecha_fin']->toDateString(),
+                'remotas' => $filtros['remotas'],
+                'confirmadas' => $filtros['confirmadas'],
+                'inmediatas' => $filtros['inmediatas'],
+                'tipo_solicitud_id' => $filtros['tipo_solicitud_id'],
+            ],
+            'totals' => [
+                'total_conciliadores' => $series->count(),
+                'total_audiencias' => (int) $series->sum('total_audiencias'),
+                'total_convenios' => (int) $series->sum('convenios'),
+                'total_no_convenios' => (int) $series->sum('no_convenios'),
+                'total_incomparecencias' => (int) $series->sum('incomparecencias'),
+            ],
+            'ranking' => $series,
+        ], 200, [], JSON_UNESCAPED_UNICODE);
     }
 
     /**
@@ -1729,19 +2015,13 @@ class DashboardController extends Controller
      */
     public function getStatsVolumen(Request $request)
     {
-        $sedesFiltro = $this->getSedesFiltro($request);
-
-        $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfYear()->toDateString());
-        $fechaFin = $request->query('fecha_fin', Carbon::now()->toDateString());
+        $filtros = $this->getStatsBaseFiltros($request);
 
         $dimensionRequest = strtolower((string) $request->query('dimension', 'sede'));
         $periodicidadRequest = strtolower((string) $request->query('periodicidad', 'mes'));
 
         $dimension = in_array($dimensionRequest, ['sede', 'objeto_solicitud', 'conciliador']) ? $dimensionRequest : 'sede';
         $periodicidad = in_array($periodicidadRequest, ['mes', 'quincena']) ? $periodicidadRequest : 'mes';
-
-        $filtroRemotas = $this->parseFiltroBooleano($request->query('remotas', 'todas'));
-        $filtroConfirmadas = $this->parseFiltroBooleano($request->query('confirmadas', 'todas'));
 
         $periodConfig = $this->getPeriodicidadConfig($periodicidad);
         $dimensionConfig = $this->getDimensionConfig($dimension);
@@ -1752,19 +2032,13 @@ class DashboardController extends Controller
         $joinHandler = $dimensionConfig['joins'];
         $joinHandler($query);
 
-        $query->whereBetween('s.created_at', [
-                Carbon::parse($fechaInicio)->startOfDay(),
-                Carbon::parse($fechaFin)->endOfDay(),
-            ])
-            ->whereIn('s.centro_id', $sedesFiltro)
-            ->when($filtroRemotas !== null, function ($q) use ($filtroRemotas) {
-                $q->where('s.virtual', $filtroRemotas);
-            })
-            ->when($filtroConfirmadas !== null, function ($q) use ($filtroConfirmadas) {
-                $q->where('s.ratificada', $filtroConfirmadas);
+        $this->applyStatsBaseFiltros($query, $filtros, 's');
+
+        $query->when($dimension === 'objeto_solicitud', function ($q) {
+                $q->whereNotNull('os.id');
             })
             ->when($dimension === 'conciliador', function ($q) {
-                $q->whereNotNull('a.conciliador_id');
+                $q->whereRaw('COALESCE(ca.conciliador_id, a.conciliador_id) IS NOT NULL');
             });
 
         $periodKey = $periodConfig['period_key'];
@@ -1780,6 +2054,8 @@ class DashboardController extends Controller
             ->selectRaw("{$dimensionId} AS dimension_id")
             ->selectRaw("{$dimensionLabel} AS dimension_label")
             ->selectRaw('COUNT(DISTINCT s.id) AS total_solicitudes')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN s.ratificada = true THEN s.id END) AS total_confirmadas')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN s.ratificada = false THEN s.id END) AS total_no_confirmadas')
             ->selectRaw("SUM({$montoExpr}) AS monto_total")
             ->selectRaw("SUM(CASE WHEN EXISTS (
                 SELECT 1
@@ -1789,6 +2065,38 @@ class DashboardController extends Controller
                   AND au.tipo_terminacion_audiencia_id = 3
                   AND au.deleted_at IS NULL
             ) THEN 1 ELSE 0 END) AS incomparecencias")
+            ->selectRaw("SUM(CASE WHEN EXISTS (
+                SELECT 1
+                FROM expedientes ex
+                INNER JOIN audiencias au ON au.expediente_id = ex.id
+                WHERE ex.solicitud_id = s.id
+                AND au.resolucion_id = 1
+                AND au.deleted_at IS NULL
+            ) THEN 1 ELSE 0 END) AS convenios")
+            ->selectRaw("SUM(CASE WHEN EXISTS (
+                SELECT 1
+                FROM expedientes ex
+                INNER JOIN audiencias au ON au.expediente_id = ex.id
+                WHERE ex.solicitud_id = s.id
+                AND au.resolucion_id = 3
+                AND au.deleted_at IS NULL
+            ) THEN 1 ELSE 0 END) AS no_hubo_convenio")
+            ->selectRaw("SUM(CASE WHEN EXISTS (
+                SELECT 1
+                FROM expedientes ex
+                INNER JOIN audiencias au ON au.expediente_id = ex.id
+                WHERE ex.solicitud_id = s.id
+                AND au.resolucion_id = 4
+                AND au.deleted_at IS NULL
+            ) THEN 1 ELSE 0 END) AS archivadas")
+            ->selectRaw("SUM(CASE WHEN EXISTS (
+                SELECT 1
+                FROM expedientes ex
+                INNER JOIN audiencias au ON au.expediente_id = ex.id
+                WHERE ex.solicitud_id = s.id
+                AND au.resolucion_id = 2
+                AND au.deleted_at IS NULL
+            ) THEN 1 ELSE 0 END) AS reagendadas")
             ->groupByRaw("{$periodKey}, {$periodLabel}, {$periodOrder}, {$dimensionId}, {$dimensionLabel}")
             ->orderByRaw("{$periodOrder} ASC")
             ->orderBy('dimension_label', 'asc')
@@ -1803,8 +2111,14 @@ class DashboardController extends Controller
                     'dimension_id' => $row->dimension_id !== null ? (int) $row->dimension_id : null,
                     'dimension_label' => $row->dimension_label,
                     'total_solicitudes' => $totalSolicitudes,
+                    'total_confirmadas' => (int) $row->total_confirmadas,
+                    'total_no_confirmadas' => (int) $row->total_no_confirmadas,
                     'monto_total' => (float) $row->monto_total,
                     'incomparecencias' => $incomparecencias,
+                    'convenios' => (int) $row->convenios,
+                    'no_hubo_convenio' => (int) $row->no_hubo_convenio,
+                    'archivadas' => (int) $row->archivadas,
+                    'reagendadas' => (int) $row->reagendadas,
                     'tasa_incomparecencia' => $totalSolicitudes > 0
                         ? round(($incomparecencias / $totalSolicitudes) * 100, 2)
                         : 0,
@@ -1856,6 +2170,14 @@ class DashboardController extends Controller
                 'monto_data' => $dataMontos,
                 'incomparecencias_data' => $dataIncomparecencias,
                 'tasa_incomparecencia_data' => $dataTasaIncomparecencia,
+                'confirmadas_data' => $periodosOrdenados->map(function ($periodo) use ($seriesIndexada, $dimensionLabel) {
+                    $valor = $seriesIndexada[$dimensionLabel][$periodo['period_key']] ?? null;
+                    return $valor ? (int) $valor['total_confirmadas'] : 0;
+                })->values(),
+                'convenios_data' => $periodosOrdenados->map(function ($periodo) use ($seriesIndexada, $dimensionLabel) {
+                    $valor = $seriesIndexada[$dimensionLabel][$periodo['period_key']] ?? null;
+                    return $valor ? (int) $valor['convenios'] : 0;
+                })->values(),
             ];
         })->values();
 
@@ -1864,18 +2186,26 @@ class DashboardController extends Controller
 
         return response()->json([
             'filters' => [
-                'sedes' => $sedesFiltro,
-                'fecha_inicio' => Carbon::parse($fechaInicio)->toDateString(),
-                'fecha_fin' => Carbon::parse($fechaFin)->toDateString(),
+                'sedes' => $filtros['sedes'],
+                'fecha_inicio' => $filtros['fecha_inicio']->toDateString(),
+                'fecha_fin' => $filtros['fecha_fin']->toDateString(),
                 'dimension' => $dimension,
                 'periodicidad' => $periodConfig['periodicidad'],
-                'remotas' => $filtroRemotas,
-                'confirmadas' => $filtroConfirmadas,
+                'remotas' => $filtros['remotas'],
+                'confirmadas' => $filtros['confirmadas'],
+                'inmediatas' => $filtros['inmediatas'],
+                'tipo_solicitud_id' => $filtros['tipo_solicitud_id'],
             ],
             'totals' => [
                 'total_solicitudes' => $totalesSolicitudes,
+                'total_confirmadas' => (int) $series->sum('total_confirmadas'),
+                'total_no_confirmadas' => (int) $series->sum('total_no_confirmadas'),
                 'monto_total' => (float) $series->sum('monto_total'),
                 'incomparecencias' => $totalesIncomparecencias,
+                'convenios' => (int) $series->sum('convenios'),
+                'no_hubo_convenio' => (int) $series->sum('no_hubo_convenio'),
+                'archivadas' => (int) $series->sum('archivadas'),
+                'reagendadas' => (int) $series->sum('reagendadas'),
                 'tasa_incomparecencia' => $totalesSolicitudes > 0
                     ? round(($totalesIncomparecencias / $totalesSolicitudes) * 100, 2)
                     : 0,

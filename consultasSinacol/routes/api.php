@@ -34,6 +34,9 @@ Route::get('dashboard/conciliadores/{id}/agenda-dia', [DashboardController::clas
 Route::get('dashboard/conciliadores/{id}/audiencias', [DashboardController::class, 'getAudiencias']);
 Route::get('dashboard/conciliadores/{id}/estadisticas', [DashboardController::class, 'getEstadisticas']);
 Route::get('stats/volumen', [DashboardController::class, 'getStatsVolumen']);
+Route::get('stats/conteos/solicitudes', [DashboardController::class, 'getStatsSolicitudesConteos']);
+Route::get('stats/conteos/audiencias', [DashboardController::class, 'getStatsAudienciasConteos']);
+Route::get('stats/conteos/conciliadores', [DashboardController::class, 'getStatsConciliadoresConteos']);
 
 Route::get('citas/datos-solicitud/{folio}/{anio}', [AudienciasController::class, 'datosSolicitud'])
     ->where([
