@@ -1636,7 +1636,8 @@ class DashboardController extends Controller
             });
         }
 
-        $conteoPorSede = $query
+        $queryConteo = clone $query;
+        $conteoPorSede = $queryConteo
             ->select('centro_id', DB::raw('COUNT(*) as total'))
             ->groupBy('centro_id')
             ->pluck('total', 'centro_id');
