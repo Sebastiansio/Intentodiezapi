@@ -1650,10 +1650,10 @@ class DashboardController extends Controller
             ->select(
                 'solicitudes.centro_id', 
                 'generos.id as genero_id', 
-                DB::raw('COALESCE(generos.name, generos.nombre, "No especificado") as genero_nombre'), 
+                DB::raw('COALESCE(generos.name, "No especificado") as genero_nombre'), 
                 DB::raw('COUNT(DISTINCT partes.solicitud_id) as total')
             )
-            ->groupBy('solicitudes.centro_id', 'generos.id', 'generos.name', 'generos.nombre')
+            ->groupBy('solicitudes.centro_id', 'generos.id', 'generos.name')
             ->get()
             ->groupBy('centro_id');
 
