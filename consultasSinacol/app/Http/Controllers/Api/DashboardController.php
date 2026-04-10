@@ -511,11 +511,14 @@ class DashboardController extends Controller
             ELSE 'Pendientes'
         END";
 
-        $solicitantePrincipalSubquery = DB::table('partes as p')
-            ->selectRaw('p.solicitud_id, MIN(p.id) as parte_id')
-            ->whereNull('p.deleted_at')
-            ->where('p.tipo_parte_id', 1)
-            ->groupBy('p.solicitud_id');
+        $terminacionCatalogo = collect([
+            ['id' => 'convenios', 'label' => 'Convenios'],
+            ['id' => 'no_convenios', 'label' => 'No Convenios'],
+            ['id' => 'incomparecencia', 'label' => 'Incomparecencia'],
+            ['id' => 'reagendas', 'label' => 'Reagendas'],
+            ['id' => 'archivados', 'label' => 'Archivados'],
+            ['id' => 'pendientes', 'label' => 'Pendientes'],
+        ]);
 
         $query = DB::table('solicitudes as s')
             ->join('expedientes as e', function ($join) {
@@ -526,12 +529,18 @@ class DashboardController extends Controller
                 $join->on('a.expediente_id', '=', 'e.id')
                     ->whereNull('a.deleted_at');
             })
-            ->leftJoinSub($solicitantePrincipalSubquery, 'sp', function ($join) {
-                $join->on('sp.solicitud_id', '=', 's.id');
-            })
-            ->leftJoin('partes as ps', function ($join) {
-                $join->on('ps.id', '=', 'sp.parte_id')
+            ->join('partes as ps', function ($join) {
+                $join->on('ps.solicitud_id', '=', 's.id')
                     ->whereNull('ps.deleted_at');
+                $join->where(function ($partesQuery) {
+                    $partesQuery->where(function ($q) {
+                        $q->where('s.tipo_solicitud_id', 1)
+                            ->where('ps.tipo_parte_id', 1);
+                    })->orWhere(function ($q) {
+                        $q->whereIn('s.tipo_solicitud_id', [2, 3])
+                            ->where('ps.tipo_parte_id', 2);
+                    });
+                });
             })
             ->leftJoin('generos as g', 'g.id', '=', 'ps.genero_id');
 
@@ -542,7 +551,7 @@ class DashboardController extends Controller
             ->selectRaw("{$generoLabelExpr} as genero")
             ->selectRaw("{$terminacionKeyExpr} as terminacion_id")
             ->selectRaw("{$terminacionLabelExpr} as terminacion")
-            ->selectRaw('COUNT(DISTINCT a.id) as total_audiencias')
+            ->selectRaw('COUNT(DISTINCT (a.id, ps.id)) as total_audiencias')
             ->groupByRaw("ps.genero_id, {$generoLabelExpr}, {$terminacionKeyExpr}, {$terminacionLabelExpr}")
             ->orderBy('genero', 'asc')
             ->orderBy('terminacion', 'asc')
@@ -558,43 +567,59 @@ class DashboardController extends Controller
             })
             ->values();
 
-        $porGenero = $series->groupBy('genero')->map(function ($items, $genero) {
+        $porGenero = $series->groupBy('genero')->map(function ($items, $genero) use ($terminacionCatalogo) {
+            $terminacionesPorGenero = $terminacionCatalogo->map(function ($cat) use ($items) {
+                $match = $items->firstWhere('terminacion_id', $cat['id']);
+
+                return [
+                    'terminacion_id' => $cat['id'],
+                    'terminacion' => $cat['label'],
+                    'total_audiencias' => (int) ($match['total_audiencias'] ?? 0),
+                ];
+            })->values();
+
             return [
                 'genero' => $genero,
                 'total_audiencias' => (int) $items->sum('total_audiencias'),
-                'terminaciones' => $items->map(function ($item) {
-                    return [
-                        'terminacion_id' => $item['terminacion_id'],
-                        'terminacion' => $item['terminacion'],
-                        'total_audiencias' => $item['total_audiencias'],
-                    ];
-                })->values(),
+                'terminaciones' => $terminacionesPorGenero,
             ];
         })->values();
 
-        $terminaciones = $series->groupBy('terminacion')->map(function ($items, $terminacion) {
+        $terminacionesPorId = $series->groupBy('terminacion_id')->map(function ($items) {
             return [
-                'terminacion' => $terminacion,
+                'terminacion_id' => $items->first()['terminacion_id'],
+                'terminacion' => $items->first()['terminacion'],
                 'total_audiencias' => (int) $items->sum('total_audiencias'),
             ];
-        })->values()->sortByDesc('total_audiencias')->values();
+        });
+
+        $terminaciones = $terminacionCatalogo->map(function ($cat) use ($terminacionesPorId) {
+            $item = $terminacionesPorId->get($cat['id']);
+
+            return [
+                'terminacion_id' => $cat['id'],
+                'terminacion' => $cat['label'],
+                'total_audiencias' => (int) ($item['total_audiencias'] ?? 0),
+            ];
+        })->values();
 
         $generosOrdenados = $porGenero->pluck('genero')->values();
         $seriesIndexada = [];
         foreach ($series as $item) {
-            $seriesIndexada[$item['terminacion']][$item['genero']] = $item['total_audiencias'];
+            $seriesIndexada[$item['terminacion_id']][$item['genero']] = $item['total_audiencias'];
         }
 
-        $datasets = $terminaciones->map(function ($terminacionItem) use ($generosOrdenados, $seriesIndexada) {
-            $terminacion = $terminacionItem['terminacion'];
+        $datasets = $terminacionCatalogo->map(function ($terminacionItem) use ($generosOrdenados, $seriesIndexada) {
+            $terminacionId = $terminacionItem['id'];
             $data = [];
 
             foreach ($generosOrdenados as $genero) {
-                $data[] = (int) ($seriesIndexada[$terminacion][$genero] ?? 0);
+                $data[] = (int) ($seriesIndexada[$terminacionId][$genero] ?? 0);
             }
 
             return [
-                'label' => $terminacion,
+                'id' => $terminacionId,
+                'label' => $terminacionItem['label'],
                 'data' => $data,
             ];
         })->values();
@@ -616,14 +641,7 @@ class DashboardController extends Controller
                 'total_audiencias' => (int) $series->sum('total_audiencias'),
                 'generos' => $porGenero,
                 'terminaciones' => $terminaciones,
-                'terminacion_catalogo' => [
-                    ['id' => 'convenios', 'label' => 'Convenios'],
-                    ['id' => 'no_convenios', 'label' => 'No Convenios'],
-                    ['id' => 'incomparecencia', 'label' => 'Incomparecencia'],
-                    ['id' => 'reagendas', 'label' => 'Reagendas'],
-                    ['id' => 'archivados', 'label' => 'Archivados'],
-                    ['id' => 'pendientes', 'label' => 'Pendientes'],
-                ],
+                'terminacion_catalogo' => $terminacionCatalogo->values(),
             ],
             'chart_pivot' => [
                 'x_axis' => $generosOrdenados,
