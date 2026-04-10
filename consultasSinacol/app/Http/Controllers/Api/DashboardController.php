@@ -436,6 +436,187 @@ class DashboardController extends Controller
         return $query;
     }
 
+    private function getRangoMensualFiltro(Request $request, $fechaInicioDefault, $fechaFinDefault)
+    {
+        $mesInicioParam = $request->query('mes_inicio');
+        $mesFinParam = $request->query('mes_fin');
+
+        if ($mesInicioParam === null && $mesFinParam === null) {
+            return [
+                'fecha_inicio' => $fechaInicioDefault,
+                'fecha_fin' => $fechaFinDefault,
+                'anio' => null,
+                'mes_inicio' => null,
+                'mes_fin' => null,
+            ];
+        }
+
+        $anio = (int) $request->query('anio', Carbon::now()->year);
+        $mesInicio = (int) ($mesInicioParam ?? 1);
+        $mesFin = (int) ($mesFinParam ?? Carbon::now()->month);
+
+        $mesInicio = max(1, min(12, $mesInicio));
+        $mesFin = max(1, min(12, $mesFin));
+
+        if ($mesInicio > $mesFin) {
+            $tmp = $mesInicio;
+            $mesInicio = $mesFin;
+            $mesFin = $tmp;
+        }
+
+        return [
+            'fecha_inicio' => Carbon::create($anio, $mesInicio, 1)->startOfDay(),
+            'fecha_fin' => Carbon::create($anio, $mesFin, 1)->endOfMonth()->endOfDay(),
+            'anio' => $anio,
+            'mes_inicio' => $mesInicio,
+            'mes_fin' => $mesFin,
+        ];
+    }
+
+    /**
+     * Audiencias desagregadas por genero y terminacion, filtrando por datos de solicitud.
+     */
+    public function getStatsAudienciasGeneroTerminacion(Request $request)
+    {
+        $filtros = $this->getStatsBaseFiltros($request);
+
+        $rangoMensual = $this->getRangoMensualFiltro($request, $filtros['fecha_inicio'], $filtros['fecha_fin']);
+        $filtros['fecha_inicio'] = $rangoMensual['fecha_inicio'];
+        $filtros['fecha_fin'] = $rangoMensual['fecha_fin'];
+
+        $generoLabelExpr = "'Sin genero'";
+        if (Schema::hasTable('generos')) {
+            if (Schema::hasColumn('generos', 'nombre')) {
+                $generoLabelExpr = "COALESCE(g.nombre, 'Sin genero')";
+            } elseif (Schema::hasColumn('generos', 'name')) {
+                $generoLabelExpr = "COALESCE(g.name, 'Sin genero')";
+            }
+        }
+
+        $terminacionLabelExpr = "'Sin terminacion'";
+        if (Schema::hasTable('tipo_terminacion_audiencias')) {
+            if (Schema::hasColumn('tipo_terminacion_audiencias', 'nombre')) {
+                $terminacionLabelExpr = "COALESCE(tta.nombre, 'Sin terminacion')";
+            } elseif (Schema::hasColumn('tipo_terminacion_audiencias', 'name')) {
+                $terminacionLabelExpr = "COALESCE(tta.name, 'Sin terminacion')";
+            }
+        }
+
+        $solicitantePrincipalSubquery = DB::table('partes as p')
+            ->selectRaw('p.solicitud_id, MIN(p.id) as parte_id')
+            ->whereNull('p.deleted_at')
+            ->where('p.tipo_parte_id', 1)
+            ->groupBy('p.solicitud_id');
+
+        $query = DB::table('solicitudes as s')
+            ->join('expedientes as e', function ($join) {
+                $join->on('e.solicitud_id', '=', 's.id')
+                    ->whereNull('e.deleted_at');
+            })
+            ->join('audiencias as a', function ($join) {
+                $join->on('a.expediente_id', '=', 'e.id')
+                    ->whereNull('a.deleted_at');
+            })
+            ->leftJoinSub($solicitantePrincipalSubquery, 'sp', function ($join) {
+                $join->on('sp.solicitud_id', '=', 's.id');
+            })
+            ->leftJoin('partes as ps', function ($join) {
+                $join->on('ps.id', '=', 'sp.parte_id')
+                    ->whereNull('ps.deleted_at');
+            })
+            ->leftJoin('generos as g', 'g.id', '=', 'ps.genero_id')
+            ->leftJoin('tipo_terminacion_audiencias as tta', 'tta.id', '=', 'a.tipo_terminacion_audiencia_id');
+
+        $this->applyStatsBaseFiltros($query, $filtros, 's');
+
+        $series = $query
+            ->selectRaw('ps.genero_id as genero_id')
+            ->selectRaw("{$generoLabelExpr} as genero")
+            ->selectRaw('a.tipo_terminacion_audiencia_id as terminacion_id')
+            ->selectRaw("{$terminacionLabelExpr} as terminacion")
+            ->selectRaw('COUNT(DISTINCT a.id) as total_audiencias')
+            ->groupByRaw("ps.genero_id, {$generoLabelExpr}, a.tipo_terminacion_audiencia_id, {$terminacionLabelExpr}")
+            ->orderBy('genero', 'asc')
+            ->orderBy('terminacion', 'asc')
+            ->get()
+            ->map(function ($row) {
+                return [
+                    'genero_id' => $row->genero_id ? (int) $row->genero_id : null,
+                    'genero' => $row->genero,
+                    'terminacion_id' => $row->terminacion_id ? (int) $row->terminacion_id : null,
+                    'terminacion' => $row->terminacion,
+                    'total_audiencias' => (int) $row->total_audiencias,
+                ];
+            })
+            ->values();
+
+        $porGenero = $series->groupBy('genero')->map(function ($items, $genero) {
+            return [
+                'genero' => $genero,
+                'total_audiencias' => (int) $items->sum('total_audiencias'),
+                'terminaciones' => $items->map(function ($item) {
+                    return [
+                        'terminacion_id' => $item['terminacion_id'],
+                        'terminacion' => $item['terminacion'],
+                        'total_audiencias' => $item['total_audiencias'],
+                    ];
+                })->values(),
+            ];
+        })->values();
+
+        $terminaciones = $series->groupBy('terminacion')->map(function ($items, $terminacion) {
+            return [
+                'terminacion' => $terminacion,
+                'total_audiencias' => (int) $items->sum('total_audiencias'),
+            ];
+        })->values()->sortByDesc('total_audiencias')->values();
+
+        $generosOrdenados = $porGenero->pluck('genero')->values();
+        $seriesIndexada = [];
+        foreach ($series as $item) {
+            $seriesIndexada[$item['terminacion']][$item['genero']] = $item['total_audiencias'];
+        }
+
+        $datasets = $terminaciones->map(function ($terminacionItem) use ($generosOrdenados, $seriesIndexada) {
+            $terminacion = $terminacionItem['terminacion'];
+            $data = [];
+
+            foreach ($generosOrdenados as $genero) {
+                $data[] = (int) ($seriesIndexada[$terminacion][$genero] ?? 0);
+            }
+
+            return [
+                'label' => $terminacion,
+                'data' => $data,
+            ];
+        })->values();
+
+        return response()->json([
+            'filters' => [
+                'sedes' => $filtros['sedes'],
+                'fecha_inicio' => $filtros['fecha_inicio']->toDateString(),
+                'fecha_fin' => $filtros['fecha_fin']->toDateString(),
+                'anio' => $rangoMensual['anio'],
+                'mes_inicio' => $rangoMensual['mes_inicio'],
+                'mes_fin' => $rangoMensual['mes_fin'],
+                'remotas' => $filtros['remotas'],
+                'confirmadas' => $filtros['confirmadas'],
+                'inmediatas' => $filtros['inmediatas'],
+                'tipo_solicitud_id' => $filtros['tipo_solicitud_id'],
+            ],
+            'totals' => [
+                'total_audiencias' => (int) $series->sum('total_audiencias'),
+                'generos' => $porGenero,
+                'terminaciones' => $terminaciones,
+            ],
+            'chart_pivot' => [
+                'x_axis' => $generosOrdenados,
+                'datasets' => $datasets,
+            ],
+            'series' => $series,
+        ], 200, [], JSON_UNESCAPED_UNICODE);
+    }
+
     /**
      * Conteos de solicitudes por sede.
      */

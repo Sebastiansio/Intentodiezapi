@@ -37,6 +37,7 @@ Route::get('stats/volumen', [DashboardController::class, 'getStatsVolumen']);
 Route::get('stats/conteos/solicitudes', [DashboardController::class, 'getStatsSolicitudesConteos']);
 Route::get('stats/conteos/audiencias', [DashboardController::class, 'getStatsAudienciasConteos']);
 Route::get('stats/conteos/conciliadores', [DashboardController::class, 'getStatsConciliadoresConteos']);
+Route::get('stats/conteos/audiencias-genero-terminacion', [DashboardController::class, 'getStatsAudienciasGeneroTerminacion']);
 
 Route::get('citas/datos-solicitud/{folio}/{anio}', [AudienciasController::class, 'datosSolicitud'])
     ->where([
