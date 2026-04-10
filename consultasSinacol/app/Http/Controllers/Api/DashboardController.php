@@ -551,9 +551,9 @@ class DashboardController extends Controller
             ->selectRaw("{$generoLabelExpr} as genero")
             ->selectRaw("{$terminacionKeyExpr} as terminacion_id")
             ->selectRaw("{$terminacionLabelExpr} as terminacion")
-            ->selectRaw('MONTH(s.created_at) as mes')
+            ->selectRaw('EXTRACT(MONTH FROM s.created_at) as mes')
             ->selectRaw('COUNT(DISTINCT (a.id, ps.id)) as total_audiencias')
-            ->groupByRaw("ps.genero_id, {$generoLabelExpr}, {$terminacionKeyExpr}, {$terminacionLabelExpr}, MONTH(s.created_at)")
+            ->groupByRaw("ps.genero_id, {$generoLabelExpr}, {$terminacionKeyExpr}, {$terminacionLabelExpr}, EXTRACT(MONTH FROM s.created_at)")
             ->orderBy('genero', 'asc')
             ->orderBy('mes', 'asc')
             ->orderBy('terminacion', 'asc')
@@ -572,12 +572,13 @@ class DashboardController extends Controller
 
         $porGenero = $series->groupBy('genero')->map(function ($items, $genero) use ($terminacionCatalogo) {
             $terminacionesPorGenero = $terminacionCatalogo->map(function ($cat) use ($items) {
-                $match = $items->firstWhere('terminacion_id', $cat['id']);
+                // Sumar todos los meses correspondientes a cada terminación
+                $totalCat = $items->where('terminacion_id', $cat['id'])->sum('total_audiencias');
 
                 return [
                     'terminacion_id' => $cat['id'],
                     'terminacion' => $cat['label'],
-                    'total_audiencias' => (int) ($match['total_audiencias'] ?? 0),
+                    'total_audiencias' => (int) $totalCat,
                 ];
             })->values();
 
@@ -609,7 +610,11 @@ class DashboardController extends Controller
         $generosOrdenados = $porGenero->pluck('genero')->values();
         $seriesIndexada = [];
         foreach ($series as $item) {
-            $seriesIndexada[$item['terminacion_id']][$item['genero']] = $item['total_audiencias'];
+            if (!isset($seriesIndexada[$item['terminacion_id']][$item['genero']])) {
+                $seriesIndexada[$item['terminacion_id']][$item['genero']] = 0;
+            }
+            // Importante: Sumar todo porque vienen datos de varios meses
+            $seriesIndexada[$item['terminacion_id']][$item['genero']] += $item['total_audiencias'];
         }
 
         $datasets = $terminacionCatalogo->map(function ($terminacionItem) use ($generosOrdenados, $seriesIndexada) {
