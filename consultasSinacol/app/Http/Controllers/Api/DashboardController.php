@@ -493,14 +493,23 @@ class DashboardController extends Controller
             }
         }
 
-        $terminacionLabelExpr = "'Sin terminacion'";
-        if (Schema::hasTable('tipo_terminacion_audiencias')) {
-            if (Schema::hasColumn('tipo_terminacion_audiencias', 'nombre')) {
-                $terminacionLabelExpr = "COALESCE(tta.nombre, 'Sin terminacion')";
-            } elseif (Schema::hasColumn('tipo_terminacion_audiencias', 'name')) {
-                $terminacionLabelExpr = "COALESCE(tta.name, 'Sin terminacion')";
-            }
-        }
+        $terminacionKeyExpr = "CASE
+            WHEN a.resolucion_id = 1 THEN 'convenios'
+            WHEN a.resolucion_id = 2 THEN 'reagendas'
+            WHEN a.resolucion_id = 3 AND a.tipo_terminacion_audiencia_id = 3 THEN 'incomparecencia'
+            WHEN a.resolucion_id = 3 THEN 'no_convenios'
+            WHEN a.resolucion_id = 4 THEN 'archivados'
+            ELSE 'pendientes'
+        END";
+
+        $terminacionLabelExpr = "CASE
+            WHEN a.resolucion_id = 1 THEN 'Convenios'
+            WHEN a.resolucion_id = 2 THEN 'Reagendas'
+            WHEN a.resolucion_id = 3 AND a.tipo_terminacion_audiencia_id = 3 THEN 'Incomparecencia'
+            WHEN a.resolucion_id = 3 THEN 'No Convenios'
+            WHEN a.resolucion_id = 4 THEN 'Archivados'
+            ELSE 'Pendientes'
+        END";
 
         $solicitantePrincipalSubquery = DB::table('partes as p')
             ->selectRaw('p.solicitud_id, MIN(p.id) as parte_id')
@@ -524,18 +533,17 @@ class DashboardController extends Controller
                 $join->on('ps.id', '=', 'sp.parte_id')
                     ->whereNull('ps.deleted_at');
             })
-            ->leftJoin('generos as g', 'g.id', '=', 'ps.genero_id')
-            ->leftJoin('tipo_terminacion_audiencias as tta', 'tta.id', '=', 'a.tipo_terminacion_audiencia_id');
+            ->leftJoin('generos as g', 'g.id', '=', 'ps.genero_id');
 
         $this->applyStatsBaseFiltros($query, $filtros, 's');
 
         $series = $query
             ->selectRaw('ps.genero_id as genero_id')
             ->selectRaw("{$generoLabelExpr} as genero")
-            ->selectRaw('a.tipo_terminacion_audiencia_id as terminacion_id')
+            ->selectRaw("{$terminacionKeyExpr} as terminacion_id")
             ->selectRaw("{$terminacionLabelExpr} as terminacion")
             ->selectRaw('COUNT(DISTINCT a.id) as total_audiencias')
-            ->groupByRaw("ps.genero_id, {$generoLabelExpr}, a.tipo_terminacion_audiencia_id, {$terminacionLabelExpr}")
+            ->groupByRaw("ps.genero_id, {$generoLabelExpr}, {$terminacionKeyExpr}, {$terminacionLabelExpr}")
             ->orderBy('genero', 'asc')
             ->orderBy('terminacion', 'asc')
             ->get()
@@ -543,7 +551,7 @@ class DashboardController extends Controller
                 return [
                     'genero_id' => $row->genero_id ? (int) $row->genero_id : null,
                     'genero' => $row->genero,
-                    'terminacion_id' => $row->terminacion_id ? (int) $row->terminacion_id : null,
+                    'terminacion_id' => $row->terminacion_id,
                     'terminacion' => $row->terminacion,
                     'total_audiencias' => (int) $row->total_audiencias,
                 ];
@@ -608,6 +616,14 @@ class DashboardController extends Controller
                 'total_audiencias' => (int) $series->sum('total_audiencias'),
                 'generos' => $porGenero,
                 'terminaciones' => $terminaciones,
+                'terminacion_catalogo' => [
+                    ['id' => 'convenios', 'label' => 'Convenios'],
+                    ['id' => 'no_convenios', 'label' => 'No Convenios'],
+                    ['id' => 'incomparecencia', 'label' => 'Incomparecencia'],
+                    ['id' => 'reagendas', 'label' => 'Reagendas'],
+                    ['id' => 'archivados', 'label' => 'Archivados'],
+                    ['id' => 'pendientes', 'label' => 'Pendientes'],
+                ],
             ],
             'chart_pivot' => [
                 'x_axis' => $generosOrdenados,
