@@ -551,9 +551,11 @@ class DashboardController extends Controller
             ->selectRaw("{$generoLabelExpr} as genero")
             ->selectRaw("{$terminacionKeyExpr} as terminacion_id")
             ->selectRaw("{$terminacionLabelExpr} as terminacion")
+            ->selectRaw('MONTH(s.created_at) as mes')
             ->selectRaw('COUNT(DISTINCT (a.id, ps.id)) as total_audiencias')
-            ->groupByRaw("ps.genero_id, {$generoLabelExpr}, {$terminacionKeyExpr}, {$terminacionLabelExpr}")
+            ->groupByRaw("ps.genero_id, {$generoLabelExpr}, {$terminacionKeyExpr}, {$terminacionLabelExpr}, MONTH(s.created_at)")
             ->orderBy('genero', 'asc')
+            ->orderBy('mes', 'asc')
             ->orderBy('terminacion', 'asc')
             ->get()
             ->map(function ($row) {
@@ -562,6 +564,7 @@ class DashboardController extends Controller
                     'genero' => $row->genero,
                     'terminacion_id' => $row->terminacion_id,
                     'terminacion' => $row->terminacion,
+                    'mes' => (int) $row->mes,
                     'total_audiencias' => (int) $row->total_audiencias,
                 ];
             })
