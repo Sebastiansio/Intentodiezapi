@@ -154,6 +154,23 @@ class DashboardController extends Controller
         return max(1, $citados);
     }
 
+    private function calcularEfectividades($acuerdos, $noAcuerdosSinIncomparecencia, $incomparecencias)
+    {
+        $acuerdos = (int) $acuerdos;
+        $noAcuerdosSinIncomparecencia = (int) $noAcuerdosSinIncomparecencia;
+        $incomparecencias = (int) $incomparecencias;
+
+        $noAcuerdosTotales = $noAcuerdosSinIncomparecencia + $incomparecencias;
+        $baseFederacion = $acuerdos + $noAcuerdosTotales;
+        $baseCcl = $acuerdos + $noAcuerdosSinIncomparecencia;
+
+        return [
+            'no_acuerdos_totales' => $noAcuerdosTotales,
+            'tasa_conciliacion_federacion' => $baseFederacion > 0 ? round(($acuerdos / $baseFederacion) * 100, 2) : 0,
+            'porcentaje_efectividad_ccl' => $baseCcl > 0 ? round(($acuerdos / $baseCcl) * 100, 2) : 0,
+        ];
+    }
+
     private function getDesgloseResolucionesPorCategoria($audiencias, $porParte = false)
     {
         $desglose = [
@@ -840,9 +857,9 @@ class DashboardController extends Controller
             ->selectRaw("COALESCE(c.nombre, 'Sin sede') as sede")
             ->selectRaw('COUNT(DISTINCT ac.audiencia_id) as total_audiencias')
             ->selectRaw('COUNT(DISTINCT CASE WHEN ac.resolucion_id = 1 THEN ac.audiencia_id END) as convenios')
-            ->selectRaw('COUNT(DISTINCT CASE WHEN ac.resolucion_id = 3 THEN ac.audiencia_id END) as no_convenios')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN ac.resolucion_id IN (2, 3) AND COALESCE(ac.tipo_terminacion_audiencia_id, 0) <> 3 THEN ac.audiencia_id END) as no_convenios')
             ->selectRaw('COUNT(DISTINCT CASE WHEN ac.resolucion_id = 4 THEN ac.audiencia_id END) as archivadas')
-            ->selectRaw('COUNT(DISTINCT CASE WHEN ac.tipo_terminacion_audiencia_id = 3 THEN ac.audiencia_id END) as incomparecencias')
+            ->selectRaw('COUNT(DISTINCT CASE WHEN ac.resolucion_id IN (2, 3) AND ac.tipo_terminacion_audiencia_id = 3 THEN ac.audiencia_id END) as incomparecencias')
             ->groupBy('ac.conciliador_id', 'p.nombre', 'p.primer_apellido', 'p.segundo_apellido', 'c.nombre')
             ->orderBy('convenios', 'desc')
             ->get()
@@ -850,7 +867,7 @@ class DashboardController extends Controller
                 $convenios = (int) $row->convenios;
                 $noConvenios = (int) $row->no_convenios;
                 $incomparecencias = (int) $row->incomparecencias;
-                $baseEfectividad = $convenios + $noConvenios + $incomparecencias;
+                $efectividades = $this->calcularEfectividades($convenios, $noConvenios, $incomparecencias);
 
                 return [
                     'conciliador_id' => (int) $row->conciliador_id,
@@ -861,7 +878,9 @@ class DashboardController extends Controller
                     'no_convenios' => $noConvenios,
                     'archivadas' => (int) $row->archivadas,
                     'incomparecencias' => $incomparecencias,
-                    'efectividad_conciliacion' => $baseEfectividad > 0 ? round(($convenios / $baseEfectividad) * 100, 2) : 0,
+                    'efectividad_conciliacion' => $efectividades['porcentaje_efectividad_ccl'],
+                    'tasa_conciliacion_federacion' => $efectividades['tasa_conciliacion_federacion'],
+                    'porcentaje_efectividad_ccl' => $efectividades['porcentaje_efectividad_ccl'],
                 ];
             })
             ->values();
@@ -1350,14 +1369,7 @@ class DashboardController extends Controller
             }
         }
 
-        // Calculamos la efectividad (Convenios vs total de audiencias con resolución válida para el cálculo)
-        // Generalmente, la efectividad es: Convenios / (Convenios + No Convenios) o Convenios / Total General
-        // Lo calcularemos sobre el Total General para mayor precisión.
-        $efectividadGeneral = $totalAudiencias > 0 ? round(($convenios / $totalAudiencias) * 100, 2) : 0;
-        
-        // Alternativamente: Efectividad de Conciliación (descartando sin resolución y archivados)
-        $totalConciliados = $convenios + $noConvenios + $noConveniosIncomparecencia;
-        $efectividadReal = $totalConciliados > 0 ? round(($convenios / $totalConciliados) * 100, 2) : 0;
+        $efectividades = $this->calcularEfectividades($convenios, $noConvenios, $noConveniosIncomparecencia);
 
         return response()->json([
             'total_audiencias' => $totalAudiencias,
@@ -1379,8 +1391,10 @@ class DashboardController extends Controller
             'sin_resolucion_por_parte' => $sin_resolucion_por_parte,
 
             'estatus_notificaciones' => $estatusNotificaciones,
-            'porcentaje_efectividad_general' => $efectividadGeneral,
-            'porcentaje_efectividad_conciliacion' => $efectividadReal
+            'porcentaje_efectividad_general' => $efectividades['tasa_conciliacion_federacion'],
+            'porcentaje_efectividad_conciliacion' => $efectividades['porcentaje_efectividad_ccl'],
+            'tasa_conciliacion_federacion' => $efectividades['tasa_conciliacion_federacion'],
+            'porcentaje_efectividad_ccl' => $efectividades['porcentaje_efectividad_ccl']
         ]);
     }
 
@@ -1390,11 +1404,26 @@ class DashboardController extends Controller
      */
     public function getResumenGeneral(Request $request)
     {
+        ini_set('max_execution_time', 300);
+        ini_set('memory_limit', '1024M');
+
         $centrosFiltro = $this->getCentrosPermitidos($request);
         $conciliadoresActivos = $this->getConciliadoresActivos();
 
-        $fechaInicio = $request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString());
-        $fechaFin = $request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString());
+        try {
+            $fechaInicio = Carbon::parse($request->query('fecha_inicio', Carbon::now()->startOfWeek()->toDateString()))->toDateString();
+            $fechaFin = Carbon::parse($request->query('fecha_fin', Carbon::now()->endOfWeek()->toDateString()))->toDateString();
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Formato de fecha inválido. Use YYYY-MM-DD en fecha_inicio y fecha_fin.'
+            ], 422);
+        }
+
+        if ($fechaInicio > $fechaFin) {
+            return response()->json([
+                'error' => 'fecha_inicio no puede ser mayor que fecha_fin.'
+            ], 422);
+        }
         
         $incluirInmediatas = $request->query('incluir_inmediatas', 'true');
 
@@ -1414,9 +1443,9 @@ class DashboardController extends Controller
         $query = Audiencia::whereBetween('fecha_audiencia', [$fechaInicio, $fechaFin])
             ->where(function($query) use ($conciliadoresIdsValidos) {
                 $query->whereIn('conciliador_id', $conciliadoresIdsValidos)
-                      ->orWhereHas('conciliadoresAudiencias', function($q) use ($conciliadoresIdsValidos) {
-                          $q->whereIn('conciliador_id', $conciliadoresIdsValidos);
-                      });
+                    ->orWhereHas('conciliadoresAudiencias', function($q) use ($conciliadoresIdsValidos) {
+                        $q->whereIn('conciliador_id', $conciliadoresIdsValidos);
+                    });
             });
 
         if ($incluirInmediatas === 'false' || $incluirInmediatas === '0' || $incluirInmediatas === false) {
@@ -1425,185 +1454,195 @@ class DashboardController extends Controller
             });
         }
 
-        // Obtener todas las audiencias aplicando filtros y relaciones
-        $audiencias = $query->select('id', 'fecha_audiencia', 'resolucion_id', 'conciliador_id', 'expediente_id', 'tipo_terminacion_audiencia_id')
-            ->with(['resolucion', 'conciliador.centro', 'conciliadoresAudiencias.conciliador.centro', 'audienciaParte:id,audiencia_id,finalizado,parte_id', 'audienciaParte.parte:id,tipo_parte_id', 'expediente.solicitud:id,inmediata'])
-            ->orderBy('fecha_audiencia', 'asc')
-            ->get();
+        $resumenDiarioIndexado = [];
+        $resumenSedesIndexado = [];
 
-        // Agrumamos la data por día (fecha_audiencia)
-        $resumenDiario = $audiencias->groupBy('fecha_audiencia')->map(function ($audienciasDelDia, $fecha) {
-            $totalDelDia = $audienciasDelDia->count();
-            $inmediatasDelDia = $audienciasDelDia->filter(function($a) {
-                return $a->expediente && $a->expediente->solicitud && $a->expediente->solicitud->inmediata;
-            })->count();
-            $ordinariasDelDia = $totalDelDia - $inmediatasDelDia;
-            
-            // Sub-agrupamos por nombre de la resolución (conteo por expediente)
-            $resolucionesAgrupadas = $audienciasDelDia->groupBy(function ($a) {
-                if (in_array($a->resolucion_id, [2, 3]) && $a->tipo_terminacion_audiencia_id == 3) {
-                    return 'No hubo convenio por incomparecencia';
-                }
-                return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
-            })->map(function ($grupo) {
-                return $grupo->count();
-            });
-
-            // Sub-agrupamos por parte (conteo por citados en la audiencia)
-            $resolucionesAgrupadasPorParte = $audienciasDelDia->groupBy(function ($a) {
-                if (in_array($a->resolucion_id, [2, 3]) && $a->tipo_terminacion_audiencia_id == 3) {
-                    return 'No hubo convenio por incomparecencia';
-                }
-                return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
-            })->map(function ($grupo) {
-                return $grupo->sum(function($a) {
-                    $citados = 0;
-                    if ($a->audienciaParte) {
-                        foreach ($a->audienciaParte as $ap) {
-                            if ($ap->parte && $ap->parte->tipo_parte_id == 2) {
-                                $citados++;
-                            }
-                        }
-                    }
-                    return max(1, $citados);
-                });
-            });
-
-            // Sub-agrupamos estatus de notificaciones en el día
-            $notificacionesAgrupadas = [];
-            foreach ($audienciasDelDia as $a) {
-                foreach ($a->audienciaParte as $ap) {
-                    $status = $ap->finalizado ?: 'Pendiente';
-                    if (!isset($notificacionesAgrupadas[$status])) {
-                        $notificacionesAgrupadas[$status] = 0;
-                    }
-                    $notificacionesAgrupadas[$status]++;
-                }
-            }
-
-            return [
-                'fecha' => $fecha,
-                'total_audiencias' => $totalDelDia,
-                'total_audiencias_inmediatas' => $inmediatasDelDia,
-                'total_audiencias_ordinarias' => $ordinariasDelDia,
-                'resoluciones' => $resolucionesAgrupadas,
-                'resoluciones_por_parte' => $resolucionesAgrupadasPorParte,
-                'estatus_notificaciones' => $notificacionesAgrupadas
-            ];
-        })->values(); // Lo hacemos array numérico para mejor legibilidad en el JSON
-
-        // Agrupamos la data por sede
-        $resumenSedes = $audiencias->groupBy(function ($a) {
-            if ($a->conciliador && $a->conciliador->centro) {
-                return $a->conciliador->centro->nombre;
-            }
-            if ($a->conciliadoresAudiencias && $a->conciliadoresAudiencias->count() > 0) {
-                $ca = $a->conciliadoresAudiencias->first();
-                if ($ca && $ca->conciliador && $ca->conciliador->centro) {
-                    return $ca->conciliador->centro->nombre;
-                }
-            }
-            return 'Sede no identificada';
-        })->map(function ($audienciasDeSede, $sede) {
-            $totalDeSede = $audienciasDeSede->count();
-            $inmediatasDeSede = $audienciasDeSede->filter(function($a) {
-                return $a->expediente && $a->expediente->solicitud && $a->expediente->solicitud->inmediata;
-            })->count();
-            $ordinariasDeSede = $totalDeSede - $inmediatasDeSede;
-            
-            // Sub-agrupamos por nombre de la resolución (conteo por expediente)
-            $resolucionesAgrupadasSede = $audienciasDeSede->groupBy(function ($a) {
-                if (in_array($a->resolucion_id, [2, 3]) && $a->tipo_terminacion_audiencia_id == 3) {
-                    return 'No hubo convenio por incomparecencia';
-                }
-                return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
-            })->map(function ($grupo) {
-                return $grupo->count();
-            });
-
-            // Sub-agrupamos por parte (conteo por citados)
-            $resolucionesAgrupadasSedePorParte = $audienciasDeSede->groupBy(function ($a) {
-                if (in_array($a->resolucion_id, [2, 3]) && $a->tipo_terminacion_audiencia_id == 3) {
-                    return 'No hubo convenio por incomparecencia';
-                }
-                return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
-            })->map(function ($grupo) {
-                return $grupo->sum(function($a) {
-                    return $this->getPesoAudienciaPorParte($a);
-                });
-            });
-
-            // Sub-agrupamos estatus de notificaciones en la sede
-            $notificacionesAgrupadasSede = [];
-            foreach ($audienciasDeSede as $a) {
-                foreach ($a->audienciaParte as $ap) {
-                    $status = $ap->finalizado ?: 'Pendiente';
-                    if (!isset($notificacionesAgrupadasSede[$status])) {
-                        $notificacionesAgrupadasSede[$status] = 0;
-                    }
-                    $notificacionesAgrupadasSede[$status]++;
-                }
-            }
-
-            $desgloseResolucionesSede = $this->getDesgloseResolucionesPorCategoria($audienciasDeSede);
-            $desgloseResolucionesSedePorParte = $this->getDesgloseResolucionesPorCategoria($audienciasDeSede, true);
-
-            return [
-                'sede' => $sede,
-                'total_audiencias' => $totalDeSede,
-                'total_audiencias_inmediatas' => $inmediatasDeSede,
-                'total_audiencias_ordinarias' => $ordinariasDeSede,
-                'resoluciones' => $resolucionesAgrupadasSede,
-                'resoluciones_por_parte' => $resolucionesAgrupadasSedePorParte,
-                'estatus_notificaciones' => $notificacionesAgrupadasSede,
-                'desglose_resoluciones' => $desgloseResolucionesSede,
-                'desglose_resoluciones_por_parte' => $desgloseResolucionesSedePorParte
-            ];
-        })->values();
-
-        // Para darle un valor extra al front, mandamos también un consolidado de todo el periodo sumado
-        $totalGeneral = $audiencias->count();
-        $totalGeneralInmediatas = $audiencias->filter(function($a) {
-            return $a->expediente && $a->expediente->solicitud && $a->expediente->solicitud->inmediata;
-        })->count();
-        $totalGeneralOrdinarias = $totalGeneral - $totalGeneralInmediatas;
-
-        $resolucionesGenerales = $audiencias->groupBy(function ($a) {
-            if (in_array($a->resolucion_id, [2, 3]) && $a->tipo_terminacion_audiencia_id == 3) {
-                return 'No hubo convenio por incomparecencia';
-            }
-            return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
-        })->map->count();
-
-        $resolucionesGeneralesPorParte = $audiencias->groupBy(function ($a) {
-            if (in_array($a->resolucion_id, [2, 3]) && $a->tipo_terminacion_audiencia_id == 3) {
-                return 'No hubo convenio por incomparecencia';
-            }
-            return $a->resolucion ? $a->resolucion->nombre : 'Sin resolución';
-        })->map(function ($grupo) {
-            return $grupo->sum(function($a) {
-                $citados = 0;
-                if ($a->audienciaParte) {
-                    foreach ($a->audienciaParte as $ap) {
-                        if ($ap->parte && $ap->parte->tipo_parte_id == 2) {
-                            $citados++;
-                        }
-                    }
-                }
-                return max(1, $citados);
-            });
-        });
-
+        $totalGeneral = 0;
+        $totalGeneralInmediatas = 0;
+        $resolucionesGenerales = [];
+        $resolucionesGeneralesPorParte = [];
         $estatusNotificacionesGenerales = [];
-        foreach ($audiencias as $a) {
-            foreach ($a->audienciaParte as $ap) {
-                $status = $ap->finalizado ?: 'Pendiente';
-                if (!isset($estatusNotificacionesGenerales[$status])) {
-                    $estatusNotificacionesGenerales[$status] = 0;
+
+        $query->select('id', 'fecha_audiencia', 'resolucion_id', 'conciliador_id', 'expediente_id', 'tipo_terminacion_audiencia_id')
+            ->with([
+                'resolucion:id,nombre',
+                'conciliador:id,centro_id',
+                'conciliador.centro:id,nombre',
+                'conciliadoresAudiencias:id,audiencia_id,conciliador_id',
+                'conciliadoresAudiencias.conciliador:id,centro_id',
+                'conciliadoresAudiencias.conciliador.centro:id,nombre',
+                'audienciaParte:id,audiencia_id,finalizado,parte_id',
+                'audienciaParte.parte:id,tipo_parte_id',
+                'expediente:id,solicitud_id',
+                'expediente.solicitud:id,inmediata',
+            ])
+            ->chunkById(300, function ($audienciasLote) use (
+                &$resumenDiarioIndexado,
+                &$resumenSedesIndexado,
+                &$totalGeneral,
+                &$totalGeneralInmediatas,
+                &$resolucionesGenerales,
+                &$resolucionesGeneralesPorParte,
+                &$estatusNotificacionesGenerales
+            ) {
+                foreach ($audienciasLote as $audiencia) {
+                    $fecha = $audiencia->fecha_audiencia
+                        ? Carbon::parse($audiencia->fecha_audiencia)->toDateString()
+                        : 'Sin fecha';
+
+                    $esInmediata = (bool) (
+                        $audiencia->expediente
+                        && $audiencia->expediente->solicitud
+                        && $audiencia->expediente->solicitud->inmediata
+                    );
+
+                    $nombreResolucion = 'Sin resolución';
+                    if (in_array((int) $audiencia->resolucion_id, [2, 3], true) && (int) $audiencia->tipo_terminacion_audiencia_id === 3) {
+                        $nombreResolucion = 'No hubo convenio por incomparecencia';
+                    } elseif ($audiencia->resolucion && $audiencia->resolucion->nombre) {
+                        $nombreResolucion = $audiencia->resolucion->nombre;
+                    }
+
+                    $categoriaResolucion = 'sin_resolucion';
+                    if ((int) $audiencia->resolucion_id === 1) {
+                        $categoriaResolucion = 'convenios';
+                    } elseif (in_array((int) $audiencia->resolucion_id, [2, 3], true)) {
+                        $categoriaResolucion = (int) $audiencia->tipo_terminacion_audiencia_id === 3
+                            ? 'no_convenios_incomparecencia'
+                            : 'no_convenios';
+                    } elseif ((int) $audiencia->resolucion_id === 4) {
+                        $categoriaResolucion = 'archivados';
+                    }
+
+                    $pesoPorParte = $this->getPesoAudienciaPorParte($audiencia);
+
+                    $sede = 'Sede no identificada';
+                    if ($audiencia->conciliador && $audiencia->conciliador->centro) {
+                        $sede = $audiencia->conciliador->centro->nombre;
+                    } elseif ($audiencia->conciliadoresAudiencias && $audiencia->conciliadoresAudiencias->count() > 0) {
+                        $asignacion = $audiencia->conciliadoresAudiencias->first();
+                        if ($asignacion && $asignacion->conciliador && $asignacion->conciliador->centro) {
+                            $sede = $asignacion->conciliador->centro->nombre;
+                        }
+                    }
+
+                    if (!isset($resumenDiarioIndexado[$fecha])) {
+                        $resumenDiarioIndexado[$fecha] = [
+                            'fecha' => $fecha,
+                            'total_audiencias' => 0,
+                            'total_audiencias_inmediatas' => 0,
+                            'total_audiencias_ordinarias' => 0,
+                            'resoluciones' => [],
+                            'resoluciones_por_parte' => [],
+                            'estatus_notificaciones' => [],
+                        ];
+                    }
+
+                    if (!isset($resumenSedesIndexado[$sede])) {
+                        $resumenSedesIndexado[$sede] = [
+                            'sede' => $sede,
+                            'total_audiencias' => 0,
+                            'total_audiencias_inmediatas' => 0,
+                            'total_audiencias_ordinarias' => 0,
+                            'resoluciones' => [],
+                            'resoluciones_por_parte' => [],
+                            'estatus_notificaciones' => [],
+                            'desglose_resoluciones' => [
+                                'convenios' => 0,
+                                'no_convenios' => 0,
+                                'no_convenios_incomparecencia' => 0,
+                                'archivados' => 0,
+                                'sin_resolucion' => 0,
+                            ],
+                            'desglose_resoluciones_por_parte' => [
+                                'convenios' => 0,
+                                'no_convenios' => 0,
+                                'no_convenios_incomparecencia' => 0,
+                                'archivados' => 0,
+                                'sin_resolucion' => 0,
+                            ],
+                        ];
+                    }
+
+                    $resumenDiarioIndexado[$fecha]['total_audiencias']++;
+                    $resumenSedesIndexado[$sede]['total_audiencias']++;
+                    $totalGeneral++;
+
+                    if ($esInmediata) {
+                        $resumenDiarioIndexado[$fecha]['total_audiencias_inmediatas']++;
+                        $resumenSedesIndexado[$sede]['total_audiencias_inmediatas']++;
+                        $totalGeneralInmediatas++;
+                    }
+
+                    if (!isset($resumenDiarioIndexado[$fecha]['resoluciones'][$nombreResolucion])) {
+                        $resumenDiarioIndexado[$fecha]['resoluciones'][$nombreResolucion] = 0;
+                    }
+                    $resumenDiarioIndexado[$fecha]['resoluciones'][$nombreResolucion]++;
+
+                    if (!isset($resumenDiarioIndexado[$fecha]['resoluciones_por_parte'][$nombreResolucion])) {
+                        $resumenDiarioIndexado[$fecha]['resoluciones_por_parte'][$nombreResolucion] = 0;
+                    }
+                    $resumenDiarioIndexado[$fecha]['resoluciones_por_parte'][$nombreResolucion] += $pesoPorParte;
+
+                    if (!isset($resumenSedesIndexado[$sede]['resoluciones'][$nombreResolucion])) {
+                        $resumenSedesIndexado[$sede]['resoluciones'][$nombreResolucion] = 0;
+                    }
+                    $resumenSedesIndexado[$sede]['resoluciones'][$nombreResolucion]++;
+
+                    if (!isset($resumenSedesIndexado[$sede]['resoluciones_por_parte'][$nombreResolucion])) {
+                        $resumenSedesIndexado[$sede]['resoluciones_por_parte'][$nombreResolucion] = 0;
+                    }
+                    $resumenSedesIndexado[$sede]['resoluciones_por_parte'][$nombreResolucion] += $pesoPorParte;
+
+                    $resumenSedesIndexado[$sede]['desglose_resoluciones'][$categoriaResolucion]++;
+                    $resumenSedesIndexado[$sede]['desglose_resoluciones_por_parte'][$categoriaResolucion] += $pesoPorParte;
+
+                    if (!isset($resolucionesGenerales[$nombreResolucion])) {
+                        $resolucionesGenerales[$nombreResolucion] = 0;
+                    }
+                    $resolucionesGenerales[$nombreResolucion]++;
+
+                    if (!isset($resolucionesGeneralesPorParte[$nombreResolucion])) {
+                        $resolucionesGeneralesPorParte[$nombreResolucion] = 0;
+                    }
+                    $resolucionesGeneralesPorParte[$nombreResolucion] += $pesoPorParte;
+
+                    if ($audiencia->audienciaParte) {
+                        foreach ($audiencia->audienciaParte as $audienciaParte) {
+                            $estatus = $audienciaParte->finalizado ?: 'Pendiente';
+
+                            if (!isset($resumenDiarioIndexado[$fecha]['estatus_notificaciones'][$estatus])) {
+                                $resumenDiarioIndexado[$fecha]['estatus_notificaciones'][$estatus] = 0;
+                            }
+                            $resumenDiarioIndexado[$fecha]['estatus_notificaciones'][$estatus]++;
+
+                            if (!isset($resumenSedesIndexado[$sede]['estatus_notificaciones'][$estatus])) {
+                                $resumenSedesIndexado[$sede]['estatus_notificaciones'][$estatus] = 0;
+                            }
+                            $resumenSedesIndexado[$sede]['estatus_notificaciones'][$estatus]++;
+
+                            if (!isset($estatusNotificacionesGenerales[$estatus])) {
+                                $estatusNotificacionesGenerales[$estatus] = 0;
+                            }
+                            $estatusNotificacionesGenerales[$estatus]++;
+                        }
+                    }
                 }
-                $estatusNotificacionesGenerales[$status]++;
-            }
-        }
+            });
+
+        ksort($resumenDiarioIndexado);
+        $resumenDiario = array_values(array_map(function ($item) {
+            $item['total_audiencias_ordinarias'] = $item['total_audiencias'] - $item['total_audiencias_inmediatas'];
+            return $item;
+        }, $resumenDiarioIndexado));
+
+        ksort($resumenSedesIndexado, SORT_NATURAL | SORT_FLAG_CASE);
+        $resumenSedes = array_values(array_map(function ($item) {
+            $item['total_audiencias_ordinarias'] = $item['total_audiencias'] - $item['total_audiencias_inmediatas'];
+            return $item;
+        }, $resumenSedesIndexado));
+
+        $totalGeneralOrdinarias = $totalGeneral - $totalGeneralInmediatas;
 
         return response()->json([
             'resumen_periodo' => [
@@ -1628,6 +1667,9 @@ class DashboardController extends Controller
      */
     public function getRankingConciliadores(Request $request)
     {
+        ini_set('max_execution_time', 300);
+        ini_set('memory_limit', '1024M');
+
         $centrosFiltro = $this->getCentrosPermitidos($request);
         $conciliadoresActivos = $this->getConciliadoresActivos();
 
@@ -1745,19 +1787,16 @@ class DashboardController extends Controller
             $convenios = $item['convenios_por_parte'];
             $noConvenios = $item['no_convenios_por_parte'];
             $noConveniosIncomp = $item['no_convenios_incomparecencia_por_parte'];
-            
-            // Efectividad Conciliación = Convenios / (Convenios + No Convenios + No Convenios Incomparecencia)
-            $totalConciliados = $convenios + $noConvenios + $noConveniosIncomp;
-            $efectividadReal = $totalConciliados > 0 ? round(($convenios / $totalConciliados) * 100, 2) : 0;
+
+            $efectividades = $this->calcularEfectividades($convenios, $noConvenios, $noConveniosIncomp);
             
             // Total general en ponderado por parte
             $totalGeneralPonderado = $convenios + $noConvenios + $noConveniosIncomp + $item['archivados_por_parte'] + $item['sin_resolucion_por_parte'];
-            
-            // Efectividad General = Convenios / Total de resolución
-            $efectividadGeneral = $totalGeneralPonderado > 0 ? round(($convenios / $totalGeneralPonderado) * 100, 2) : 0;
 
-            $item['porcentaje_efectividad_conciliacion'] = $efectividadReal;
-            $item['porcentaje_efectividad_general'] = $efectividadGeneral;
+            $item['porcentaje_efectividad_conciliacion'] = $efectividades['porcentaje_efectividad_ccl'];
+            $item['porcentaje_efectividad_general'] = $efectividades['tasa_conciliacion_federacion'];
+            $item['porcentaje_efectividad_ccl'] = $efectividades['porcentaje_efectividad_ccl'];
+            $item['tasa_conciliacion_federacion'] = $efectividades['tasa_conciliacion_federacion'];
             $item['total_partes_atendidas'] = $totalGeneralPonderado;
             
             return $item;
