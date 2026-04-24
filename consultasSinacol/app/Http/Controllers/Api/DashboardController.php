@@ -21,6 +21,10 @@ class DashboardController extends Controller
 
     private const CONFIG_VALUE_CANDIDATES = ['valor', 'value', 'dato', 'contenido'];
 
+    private const MULTA_STATUS_CANDIDATES = ['state', 'estatus', 'status', 'estado', 'code_estatus'];
+
+    private const MULTA_PARTE_CANDIDATES = ['citado_id', 'parte_id', 'solicitado_id'];
+
     private function getConfiguracionExistingColumns($candidates)
     {
         if (!Schema::hasTable('configuraciones')) {
@@ -273,6 +277,150 @@ class DashboardController extends Controller
         }
 
         return null;
+    }
+
+    private function getMultaExistingColumn($candidates)
+    {
+        if (!Schema::hasTable('multas')) {
+            return null;
+        }
+
+        foreach ($candidates as $column) {
+            if (Schema::hasColumn('multas', $column)) {
+                return $column;
+            }
+        }
+
+        return null;
+    }
+
+    private function normalizeMultaEstado($estado)
+    {
+        $estado = trim((string) $estado);
+        return $estado !== '' ? $estado : 'sin_estado';
+    }
+
+    private function mergeConteoMap(array &$destino, array $origen)
+    {
+        foreach ($origen as $key => $value) {
+            if (!isset($destino[$key])) {
+                $destino[$key] = 0;
+            }
+
+            $destino[$key] += (int) $value;
+        }
+    }
+
+    private function getMetricasMultasPorAudiencias($audienciaIds)
+    {
+        $audienciaIds = array_values(array_filter(array_unique(array_map(function ($id) {
+            return (int) $id;
+        }, is_array($audienciaIds) ? $audienciaIds : [])), function ($id) {
+            return $id > 0;
+        }));
+
+        $respuesta = [
+            'multas_generadas' => 0,
+            'audiencias_con_multa' => 0,
+            'multas_por_estado' => [],
+            'por_audiencia' => [],
+        ];
+
+        if (empty($audienciaIds) || !Schema::hasTable('multas') || !Schema::hasColumn('multas', 'audiencia_id')) {
+            return $respuesta;
+        }
+
+        $statusColumn = $this->getMultaExistingColumn(self::MULTA_STATUS_CANDIDATES);
+        $parteColumn = $this->getMultaExistingColumn(self::MULTA_PARTE_CANDIDATES);
+        $audienciaParteColumn = Schema::hasColumn('multas', 'audiencia_parte_id') ? 'audiencia_parte_id' : null;
+
+        $query = DB::table('multas')->whereIn('audiencia_id', $audienciaIds);
+
+        if (Schema::hasColumn('multas', 'deleted_at')) {
+            $query->whereNull('deleted_at');
+        }
+
+        if (Schema::hasColumn('multas', 'created_at')) {
+            $query->orderByDesc('created_at');
+        } elseif (Schema::hasColumn('multas', 'id')) {
+            $query->orderByDesc('id');
+        }
+
+        $selects = [
+            'audiencia_id',
+            $statusColumn ? DB::raw("COALESCE({$statusColumn}, 'sin_estado') as multa_estado") : DB::raw("'sin_estado' as multa_estado"),
+            $audienciaParteColumn ? DB::raw("{$audienciaParteColumn} as audiencia_parte_id") : DB::raw('NULL as audiencia_parte_id'),
+            $parteColumn ? DB::raw("{$parteColumn} as parte_id") : DB::raw('NULL as parte_id'),
+        ];
+
+        $multas = $query->get($selects);
+
+        foreach ($multas as $multa) {
+            $audienciaId = (int) ($multa->audiencia_id ?? 0);
+            if ($audienciaId <= 0) {
+                continue;
+            }
+
+            $estado = $this->normalizeMultaEstado($multa->multa_estado ?? null);
+            $audienciaParteId = (int) ($multa->audiencia_parte_id ?? 0);
+            $parteId = (int) ($multa->parte_id ?? 0);
+
+            if (!isset($respuesta['por_audiencia'][$audienciaId])) {
+                $respuesta['por_audiencia'][$audienciaId] = [
+                    'tiene_multa_generada' => true,
+                    'total_multas' => 0,
+                    'multas_por_estado' => [],
+                    'por_audiencia_parte' => [],
+                    'por_parte' => [],
+                ];
+            }
+
+            $respuesta['multas_generadas']++;
+            if (!isset($respuesta['multas_por_estado'][$estado])) {
+                $respuesta['multas_por_estado'][$estado] = 0;
+            }
+            $respuesta['multas_por_estado'][$estado]++;
+
+            $respuesta['por_audiencia'][$audienciaId]['total_multas']++;
+            if (!isset($respuesta['por_audiencia'][$audienciaId]['multas_por_estado'][$estado])) {
+                $respuesta['por_audiencia'][$audienciaId]['multas_por_estado'][$estado] = 0;
+            }
+            $respuesta['por_audiencia'][$audienciaId]['multas_por_estado'][$estado]++;
+
+            if ($audienciaParteId > 0) {
+                if (!isset($respuesta['por_audiencia'][$audienciaId]['por_audiencia_parte'][$audienciaParteId])) {
+                    $respuesta['por_audiencia'][$audienciaId]['por_audiencia_parte'][$audienciaParteId] = [
+                        'multa_generada' => true,
+                        'multa_estado' => $estado,
+                        'multas_por_estado' => [],
+                    ];
+                }
+
+                if (!isset($respuesta['por_audiencia'][$audienciaId]['por_audiencia_parte'][$audienciaParteId]['multas_por_estado'][$estado])) {
+                    $respuesta['por_audiencia'][$audienciaId]['por_audiencia_parte'][$audienciaParteId]['multas_por_estado'][$estado] = 0;
+                }
+                $respuesta['por_audiencia'][$audienciaId]['por_audiencia_parte'][$audienciaParteId]['multas_por_estado'][$estado]++;
+            }
+
+            if ($parteId > 0) {
+                if (!isset($respuesta['por_audiencia'][$audienciaId]['por_parte'][$parteId])) {
+                    $respuesta['por_audiencia'][$audienciaId]['por_parte'][$parteId] = [
+                        'multa_generada' => true,
+                        'multa_estado' => $estado,
+                        'multas_por_estado' => [],
+                    ];
+                }
+
+                if (!isset($respuesta['por_audiencia'][$audienciaId]['por_parte'][$parteId]['multas_por_estado'][$estado])) {
+                    $respuesta['por_audiencia'][$audienciaId]['por_parte'][$parteId]['multas_por_estado'][$estado] = 0;
+                }
+                $respuesta['por_audiencia'][$audienciaId]['por_parte'][$parteId]['multas_por_estado'][$estado]++;
+            }
+        }
+
+        $respuesta['audiencias_con_multa'] = count($respuesta['por_audiencia']);
+
+        return $respuesta;
     }
 
     private function getSedesFiltro(Request $request)
@@ -1198,14 +1346,28 @@ class DashboardController extends Controller
 
         $total = $audiencias->count();
 
-        $audienciasTransformadas = $audiencias->map(function($a) {
+        $metricasMultas = $this->getMetricasMultasPorAudiencias($audiencias->pluck('id')->all());
+
+        $audienciasTransformadas = $audiencias->map(function($a) use ($metricasMultas) {
             $sala = $a->salasAudiencias && $a->salasAudiencias->count() > 0 
                     ? $a->salasAudiencias->first()->sala->sala 
                     : 'Sin sala asignada';
+
+            $multasAudiencia = $metricasMultas['por_audiencia'][$a->id] ?? null;
+            $multasPorAudienciaParte = $multasAudiencia['por_audiencia_parte'] ?? [];
+            $multasPorParte = $multasAudiencia['por_parte'] ?? [];
                 
                 $notificacionesPartes = [];
                 if ($a->audienciaParte) {
-                    $notificacionesPartes = $a->audienciaParte->map(function ($ap) {
+                    $notificacionesPartes = $a->audienciaParte->map(function ($ap) use ($multasPorAudienciaParte, $multasPorParte) {
+                        $multaGenerada = null;
+
+                        if (isset($multasPorAudienciaParte[$ap->id])) {
+                            $multaGenerada = $multasPorAudienciaParte[$ap->id];
+                        } elseif (isset($multasPorParte[$ap->parte_id])) {
+                            $multaGenerada = $multasPorParte[$ap->parte_id];
+                        }
+
                         return [
                             'parte_id' => $ap->parte_id,
                             'tipo_parte' => $ap->parte ? $ap->parte->tipo_parte_id : null,
@@ -1213,7 +1375,10 @@ class DashboardController extends Controller
                             'fecha_notificacion' => $ap->fecha_notificacion,
                             'estatus_notificacion' => $ap->finalizado ?: 'Pendiente',
                             'detalle_notificacion' => $ap->detalle,
-                            'multa' => (bool) $ap->multa
+                            'multa' => (bool) $ap->multa,
+                            'multa_generada' => (bool) ($multaGenerada['multa_generada'] ?? false),
+                            'multa_estado' => $multaGenerada['multa_estado'] ?? null,
+                            'multas_por_estado' => $multaGenerada['multas_por_estado'] ?? []
                         ];
                     })->toArray();
                 }
@@ -1231,6 +1396,11 @@ class DashboardController extends Controller
                     'resolucion_id' => $a->resolucion_id,
                     'resolucion_nombre' => $a->resolucion ? $a->resolucion->nombre : 'Sin resolución',
                     'etapa_notificacion' => $a->etapa_notificacion ? $a->etapa_notificacion->etapa : 'N/A',
+                    'multas' => [
+                        'tiene_multa_generada' => (bool) ($multasAudiencia['tiene_multa_generada'] ?? false),
+                        'total_multas_generadas' => (int) ($multasAudiencia['total_multas'] ?? 0),
+                        'multas_por_estado' => $multasAudiencia['multas_por_estado'] ?? [],
+                    ],
                     'notificaciones_partes' => $notificacionesPartes
                 ];
             });
@@ -1369,6 +1539,8 @@ class DashboardController extends Controller
             }
         }
 
+        $metricasMultas = $this->getMetricasMultasPorAudiencias($audiencias->pluck('id')->all());
+
         $efectividades = $this->calcularEfectividades($convenios, $noConvenios, $noConveniosIncomparecencia);
 
         return response()->json([
@@ -1391,6 +1563,9 @@ class DashboardController extends Controller
             'sin_resolucion_por_parte' => $sin_resolucion_por_parte,
 
             'estatus_notificaciones' => $estatusNotificaciones,
+            'multas_generadas' => (int) $metricasMultas['multas_generadas'],
+            'audiencias_con_multa' => (int) $metricasMultas['audiencias_con_multa'],
+            'multas_por_estado' => $metricasMultas['multas_por_estado'],
             'porcentaje_efectividad_general' => $efectividades['tasa_conciliacion_federacion'],
             'porcentaje_efectividad_conciliacion' => $efectividades['porcentaje_efectividad_ccl'],
             'tasa_conciliacion_federacion' => $efectividades['tasa_conciliacion_federacion'],
@@ -1462,6 +1637,9 @@ class DashboardController extends Controller
         $resolucionesGenerales = [];
         $resolucionesGeneralesPorParte = [];
         $estatusNotificacionesGenerales = [];
+        $multasGenerales = 0;
+        $audienciasConMultaGenerales = 0;
+        $multasPorEstadoGenerales = [];
 
         $query->select('id', 'fecha_audiencia', 'resolucion_id', 'conciliador_id', 'expediente_id', 'tipo_terminacion_audiencia_id')
             ->with([
@@ -1483,12 +1661,23 @@ class DashboardController extends Controller
                 &$totalGeneralInmediatas,
                 &$resolucionesGenerales,
                 &$resolucionesGeneralesPorParte,
-                &$estatusNotificacionesGenerales
+                &$estatusNotificacionesGenerales,
+                &$multasGenerales,
+                &$audienciasConMultaGenerales,
+                &$multasPorEstadoGenerales
             ) {
+                $metricasMultasLote = $this->getMetricasMultasPorAudiencias($audienciasLote->pluck('id')->all());
+                $multasPorAudienciaLote = $metricasMultasLote['por_audiencia'] ?? [];
+
                 foreach ($audienciasLote as $audiencia) {
                     $fecha = $audiencia->fecha_audiencia
                         ? Carbon::parse($audiencia->fecha_audiencia)->toDateString()
                         : 'Sin fecha';
+
+                    $metricasMultaAudiencia = $multasPorAudienciaLote[$audiencia->id] ?? null;
+                    $totalMultasAudiencia = (int) ($metricasMultaAudiencia['total_multas'] ?? 0);
+                    $multasEstadoAudiencia = $metricasMultaAudiencia['multas_por_estado'] ?? [];
+                    $tieneMultaAudiencia = $totalMultasAudiencia > 0;
 
                     $esInmediata = (bool) (
                         $audiencia->expediente
@@ -1535,6 +1724,9 @@ class DashboardController extends Controller
                             'resoluciones' => [],
                             'resoluciones_por_parte' => [],
                             'estatus_notificaciones' => [],
+                            'multas_generadas' => 0,
+                            'audiencias_con_multa' => 0,
+                            'multas_por_estado' => [],
                         ];
                     }
 
@@ -1547,6 +1739,9 @@ class DashboardController extends Controller
                             'resoluciones' => [],
                             'resoluciones_por_parte' => [],
                             'estatus_notificaciones' => [],
+                            'multas_generadas' => 0,
+                            'audiencias_con_multa' => 0,
+                            'multas_por_estado' => [],
                             'desglose_resoluciones' => [
                                 'convenios' => 0,
                                 'no_convenios' => 0,
@@ -1567,6 +1762,22 @@ class DashboardController extends Controller
                     $resumenDiarioIndexado[$fecha]['total_audiencias']++;
                     $resumenSedesIndexado[$sede]['total_audiencias']++;
                     $totalGeneral++;
+
+                    if ($tieneMultaAudiencia) {
+                        $resumenDiarioIndexado[$fecha]['audiencias_con_multa']++;
+                        $resumenSedesIndexado[$sede]['audiencias_con_multa']++;
+                        $audienciasConMultaGenerales++;
+                    }
+
+                    if ($totalMultasAudiencia > 0) {
+                        $resumenDiarioIndexado[$fecha]['multas_generadas'] += $totalMultasAudiencia;
+                        $resumenSedesIndexado[$sede]['multas_generadas'] += $totalMultasAudiencia;
+                        $multasGenerales += $totalMultasAudiencia;
+
+                        $this->mergeConteoMap($resumenDiarioIndexado[$fecha]['multas_por_estado'], $multasEstadoAudiencia);
+                        $this->mergeConteoMap($resumenSedesIndexado[$sede]['multas_por_estado'], $multasEstadoAudiencia);
+                        $this->mergeConteoMap($multasPorEstadoGenerales, $multasEstadoAudiencia);
+                    }
 
                     if ($esInmediata) {
                         $resumenDiarioIndexado[$fecha]['total_audiencias_inmediatas']++;
@@ -1654,7 +1865,10 @@ class DashboardController extends Controller
                 'total_audiencias_ordinarias' => $totalGeneralOrdinarias,
                 'resoluciones' => $resolucionesGenerales,
                 'resoluciones_por_parte' => $resolucionesGeneralesPorParte,
-                'estatus_notificaciones' => $estatusNotificacionesGenerales
+                'estatus_notificaciones' => $estatusNotificacionesGenerales,
+                'multas_generadas' => $multasGenerales,
+                'audiencias_con_multa' => $audienciasConMultaGenerales,
+                'multas_por_estado' => $multasPorEstadoGenerales,
             ],
             'desglose_diario' => $resumenDiario,
             'desglose_sedes' => $resumenSedes
